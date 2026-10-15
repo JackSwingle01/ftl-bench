@@ -52,7 +52,9 @@ local function write_atomic(path, text)
 end
 
 local SENSORS = 7
-local KEY_1 = 49 -- SDLK_1
+local BEAM_TYPE = 2 -- WeaponBlueprint.type
+local KEY_1 = 49 -- SDLK_1: FTL's weapon1 and first-choice hotkey
+local KEY_AUTOFIRE = 118 -- SDLK_v: FTL's default autofire hotkey (settings.ini)
 
 ---@param n number
 ---@return integer
@@ -187,6 +189,9 @@ local function read_armaments(ship)
             charge = w.cooldown.first,
             charge_time = w.cooldown.second,
             missiles = w.blueprint.missiles > 0,
+            targets_needed = int(w:NumTargetsRequired()),
+            beam = int(w.blueprint.type) == BEAM_TYPE,
+            aimed = w.targets:size() > 0,
         }
     end
     list = ship:GetDroneList()
@@ -398,7 +403,8 @@ local function read_raw()
         raw.player.doors = doors
         raw.player.crew, crew_objects = read_crew(ship)
         mark_damage(raw.player.crew)
-        local p, pm = raw.player, Hyperspace.PowerManager.GetPowerManager(0)
+        local p = raw.player --[[@as RawShip]]
+        local pm = Hyperspace.PowerManager.GetPowerManager(0)
         p.reactor = { used = int(pm.currentPower.first), max = int(pm.currentPower.second) }
         p.systems = read_systems(ship)
         local shields = ship:GetShieldPower()
@@ -411,6 +417,7 @@ local function read_raw()
         p.lifeform_scanner = has_augment(ship, "LIFE_SCANNER")
         local enemy = Hyperspace.ships.enemy
         raw.enemy = enemy and read_enemy(enemy, ship) or nil
+        raw.autofire = gui.combatControl.weapControl.autoFiring
         raw.map = read_map(app.world.starMap, raw.sector)
         raw.event = read_event(gui)
     end
@@ -463,6 +470,41 @@ local function execute(cmd)
         local app = Hyperspace.App
         app:OnKeyDown(KEY_1 + cmd.choice)
         app:OnKeyUp(KEY_1 + cmd.choice)
+    elseif cmd.kind == "target" then
+        -- Aim directly: target points (room centres on the enemy ship), the target ship id, fire
+        -- when charged, and the weapon system's own target ship.
+        local enemy = Hyperspace.ships.enemy
+        if not enemy then
+            return "the enemy ship is gone"
+        end
+        -- A real click (diffed in-game) sets one target point per shot, or start and end for a beam,
+        -- and the same points as lastTargets. The game fires once it has as many as it needs.
+        local w = weapon_objects[cmd.slot + 1]
+        local points = {}
+        if #cmd.rooms == 2 then
+            points = { enemy:GetRoomCenter(cmd.rooms[1]), enemy:GetRoomCenter(cmd.rooms[2]) }
+        else
+            for i = 1, int(w:NumTargetsRequired()) do
+                points[i] = enemy:GetRoomCenter(cmd.rooms[1])
+            end
+        end
+        w.targets:clear()
+        w.lastTargets:clear()
+        for _, point in ipairs(points) do
+            w.targets:push_back(point)
+            w.lastTargets:push_back(point)
+        end
+        w.targetId, w.fireWhenReady = 1, true
+    elseif cmd.kind == "untarget" then
+        local w = weapon_objects[cmd.slot + 1]
+        w.targets:clear()
+        w.targetId, w.fireWhenReady = -1, false
+    elseif cmd.kind == "autofire" then
+        -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
+        if Hyperspace.App.gui.combatControl.weapControl.autoFiring ~= cmd.on then
+            Hyperspace.App:OnKeyDown(KEY_AUTOFIRE)
+            Hyperspace.App:OnKeyUp(KEY_AUTOFIRE)
+        end
     elseif cmd.kind == "jump" then
         -- The game travels on its next update, as when the player clicks a beacon on the map.
         local sm = Hyperspace.App.world.starMap
@@ -516,7 +558,13 @@ local function handle_inbox(raw)
         if id then
             local cmd, err = Commands.plan(text, raw)
             if cmd then
-                err = execute(cmd)
+                local ok, result = pcall(execute, cmd)
+                -- Always answer, so the CLI never waits on a Command that broke mid-way.
+                if ok then
+                    err = result
+                else
+                    err = "internal error: " .. tostring(result)
+                end
             end
             local status = err and ("error\t" .. err)
                 or (cmd and cmd.seconds and ("ok\t" .. cmd.seconds))
@@ -536,6 +584,119 @@ local function handle_inbox(raw)
     end
 end
 
+-- Combat hooks: collected as the game runs, handed to Visibility once per frame.
+local hooks, pending_areas, shielded = {}, {}, {}
+
+---@return table[]
+local function take_hooks()
+    for _, area in pairs(pending_areas) do -- reached a room but never hit it: dodged
+        hooks[#hooks + 1] = { kind = "miss", ship = area.ship }
+    end
+    local out = hooks
+    hooks, pending_areas = {}, {}
+    return out
+end
+
+---Slot of a weapon on its ship, matched by name (the first match).
+---@param ship any ShipManager
+---@param weapon any ProjectileFactory
+---@return integer
+local function weapon_slot(ship, weapon)
+    local list = ship:GetWeaponList()
+    for i = 0, list:size() - 1 do
+        if list[i].name == weapon.name then
+            return i
+        end
+    end
+    return 0
+end
+
+---Run a hook body, logging errors instead of breaking the game's hook chain.
+---@param f fun()
+local function guarded(f)
+    local ok, err = pcall(f)
+    if not ok then
+        print("[ftlbench] hook error: " .. tostring(err))
+    end
+end
+
+---@param ship any ShipManager
+---@param location any Pointf
+---@return integer
+local function room_at(ship, location)
+    return int(ship.ship:GetSelectedRoomId(int(location.x), int(location.y), true))
+end
+
+-- Hyperspace requires each callback to declare the hook's exact parameters (no `...`), and hooks
+-- that can change the outcome must hand the game's own values back unchanged.
+local events, CONTINUE = Defines.InternalEvents, Defines.Chain.CONTINUE
+script.on_internal_event(events.PROJECTILE_FIRE, function(projectile, weapon)
+    guarded(function()
+        local by = int(projectile.ownerId)
+        local ship = Hyperspace.ships[by == 0 and "player" or "enemy"]
+        if ship then
+            hooks[#hooks + 1] =
+                { kind = "fire", by = by, weapon = weapon.name, slot = weapon_slot(ship, weapon) }
+        end
+    end)
+end)
+script.on_internal_event(
+    events.DAMAGE_AREA,
+    function(ship, projectile, _location, _damage, forceHit, shipFriendlyFire)
+        guarded(function()
+            if projectile then
+                pending_areas[int(projectile.selfId)] = { ship = int(ship.iShipId) }
+            end
+        end)
+        return CONTINUE, forceHit, shipFriendlyFire
+    end
+)
+script.on_internal_event(
+    events.DAMAGE_AREA_HIT,
+    function(ship, projectile, location, damage, _shipFriendlyFire)
+        guarded(function()
+            if projectile then
+                pending_areas[int(projectile.selfId)] = nil
+            end
+            hooks[#hooks + 1] = {
+                kind = "hit",
+                ship = int(ship.iShipId),
+                room = room_at(ship, location),
+                damage = int(damage.iDamage),
+            }
+        end)
+        return CONTINUE
+    end
+)
+script.on_internal_event(
+    events.DAMAGE_BEAM,
+    function(ship, _projectile, location, damage, newTile, beamHit)
+        guarded(function()
+            if newTile then
+                hooks[#hooks + 1] = {
+                    kind = "hit",
+                    ship = int(ship.iShipId),
+                    room = room_at(ship, location),
+                    damage = int(damage.iDamage),
+                }
+            end
+        end)
+        return CONTINUE, beamHit
+    end
+)
+script.on_internal_event(events.SHIELD_COLLISION, function(ship, projectile, _damage, _response)
+    guarded(function()
+        -- The game reports an ongoing contact every frame; record each projectile once.
+        local id = projectile and int(projectile.selfId)
+        if id and not shielded[id] then
+            shielded[id] = true
+            pending_areas[id] = nil
+            hooks[#hooks + 1] = { kind = "shield", ship = int(ship.iShipId) }
+        end
+    end)
+    return CONTINUE
+end)
+
 local function tick()
     local raw = read_raw()
     if raw.in_run then
@@ -544,7 +705,7 @@ local function tick()
             game_time = game_time + Hyperspace.FPS.SpeedFactor / 16
         end
     end
-    local out = Visibility.observe(prev, raw, {})
+    local out = Visibility.observe(prev, raw, take_hooks())
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))

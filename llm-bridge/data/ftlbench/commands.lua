@@ -4,7 +4,7 @@
 FtlBench = FtlBench or {}
 
 ---@class ResolvedCommand
----@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"|"choose"
+---@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"|"choose"|"target"|"untarget"|"autofire"
 ---@field seconds number?   wait
 ---@field crew integer?     move: crew uid
 ---@field room integer?     move: room id
@@ -18,6 +18,7 @@ FtlBench = FtlBench or {}
 ---@field beacon integer?   jump
 ---@field sector integer?   jump_sector: index of the chosen sector
 ---@field choice integer?   choose: 0-based choice index
+---@field rooms integer[]?  target: enemy room ids (two for a beam)
 
 local Commands = {}
 
@@ -249,6 +250,58 @@ local function plan_jump(args, raw)
     return resolved
 end
 
+---@param raw RawState
+---@param word string?
+---@return RawWeapon? weapon
+---@return integer? slot
+---@return string? error
+local function find_weapon(raw, word)
+    local slot, enemy = parse_id(word, "weapon")
+    if not slot or enemy then
+        return nil, nil, ("expected a weapon ID like weapon:0, got %s"):format(word or "nothing")
+    end
+    local w = (raw.player.weapons or {})[slot + 1]
+    if not w then
+        return nil, nil, "no weapon:" .. slot
+    end
+    return w, slot
+end
+
+---@param args string[]
+---@param raw RawState
+---@return ResolvedCommand?, string?
+local function plan_target(args, raw)
+    if #args < 2 or #args > 3 then
+        return nil, "usage: target <weapon> <enemy:room> [<enemy:room> for a beam]"
+    end
+    local w, slot, err = find_weapon(raw, args[1])
+    if not w then
+        return nil, err
+    end
+    local label = ("weapon:%d (%s)"):format(slot, w.name)
+    if not raw.enemy then
+        return nil, "there is no enemy ship to target"
+    elseif not w.powered then
+        return nil, label .. " is not powered"
+    end
+    local rooms = {}
+    for i = 2, #args do
+        local room, enemy = parse_id(args[i], "room")
+        if not room or not enemy then
+            return nil, "target an enemy room, like enemy:room:3"
+        elseif not raw.enemy.rooms[room + 1] then
+            return nil, "no enemy:room:" .. room
+        end
+        rooms[#rooms + 1] = room
+    end
+    if w.beam and #rooms ~= 2 then
+        return nil, label .. " is a beam: give a start and an end room"
+    elseif not w.beam and #rooms ~= 1 then
+        return nil, label .. " takes a single room"
+    end
+    return { kind = "target", slot = slot, rooms = rooms }
+end
+
 ---@param args string[]
 ---@param raw RawState
 ---@return ResolvedCommand?, string?
@@ -367,6 +420,20 @@ local handlers = {
     power = plan_power,
     jump = plan_jump,
     choose = plan_choose,
+    target = plan_target,
+    untarget = function(args, raw)
+        local w, slot, err = find_weapon(raw, args[1])
+        if #args ~= 1 or not w then
+            return nil, err or "usage: untarget <weapon>"
+        end
+        return { kind = "untarget", slot = slot }
+    end,
+    autofire = function(args)
+        if #args ~= 1 or (args[1] ~= "on" and args[1] ~= "off") then
+            return nil, "usage: autofire on|off"
+        end
+        return { kind = "autofire", on = args[1] == "on" }
+    end,
     weapon = function(args, raw)
         return plan_armament("weapon", args, raw)
     end,

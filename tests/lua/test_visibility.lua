@@ -1029,3 +1029,56 @@ t.test("no enemy_left when we are the ones who jumped away", function()
     t.eq(#events(before, after), 1) -- only "arrived"
     t.eq(events(before, after)[1].type, "arrived")
 end)
+
+-- #7: combat events from game hooks.
+local function hooks(raw, list)
+    return V.observe(raw, raw, list).events
+end
+
+t.test("our shots, hits on the enemy and their shield blocks", function()
+    local raw = raw_with_enemy()
+    t.eq(
+        hooks(raw, {
+            { kind = "fire", by = 0, weapon = "Burst Laser Mark II", slot = 1 },
+            { kind = "hit", ship = 1, room = 0, damage = 2 },
+            { kind = "shield", ship = 1 },
+            { kind = "miss", ship = 1 },
+        }),
+        {
+            { type = "fired", by = "us", weapon = "weapon:1 (Burst Laser Mark II)" },
+            { type = "hit", target = "enemy", room = "enemy:room:0 (weapons)", damage = 2 },
+            { type = "shield_block", target = "enemy" },
+            { type = "miss", target = "enemy" },
+        }
+    )
+end)
+
+t.test("enemy shots name the weapon only at Sensors 3+", function()
+    local raw = raw_with_enemy()
+    t.eq(
+        hooks(raw, { { kind = "fire", by = 1, weapon = "Basic Laser", slot = 0 } }),
+        { { type = "fired", by = "enemy" } }
+    )
+    raw.player.sensors_power = 3
+    t.eq(
+        hooks(raw, { { kind = "fire", by = 1, weapon = "Basic Laser", slot = 0 } }),
+        { { type = "fired", by = "enemy", weapon = "enemy:weapon:0 (Basic Laser)" } }
+    )
+end)
+
+t.test("hits on our ship name the room", function()
+    t.eq(hooks(raw_with_enemy(), { { kind = "hit", ship = 0, room = 2, damage = 1 } }), {
+        { type = "hit", target = "us", room = "room:2 (shields)", damage = 1 },
+    })
+end)
+
+t.test("weapons show whether they are aimed, and the state shows autofire", function()
+    local raw = raw_with_systems()
+    raw.player.weapons[2].aimed = true
+    raw.autofire = true
+    local state = V.observe(nil, raw, {}).views.state
+    t.eq(
+        { state.ship.weapons[2].aimed, state.ship.weapons[1].aimed, state.autofire },
+        { true, nil, true }
+    )
+end)

@@ -4,6 +4,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GAME="$ROOT/game"
+# Never install Lua the game can't load: compile-check every mod script first.
+LUAC="$ROOT/.tools/bin/luac"
+find "$ROOT/llm-bridge" "$ROOT/dev-probe" -name '*.lua' -print0 | xargs -0 "$LUAC" -p
 MODS=("$GAME/ftlman/mods/Hyperspace.ftl" "$ROOT/llm-bridge")
 [[ "${1:-}" == "--dev" ]] && MODS+=("$ROOT/dev-probe")
 "$GAME/ftlman/ftlman" patch -d "$GAME/FTL.app/Contents/Resources" "${MODS[@]}"

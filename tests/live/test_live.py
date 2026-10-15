@@ -484,6 +484,60 @@ class LiveEnemyTest(unittest.TestCase):
             self.assertIn("name", crew)
 
 
+class LiveCombatTest(unittest.TestCase):
+    """#7: aim a real weapon at a real enemy and see it fire."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+        if not find_enemy():
+            raise unittest.SkipTest("no enemy ship found within 8 jumps")
+
+    def tearDown(self) -> None:
+        ftl("pause")
+
+    def test_target_fires_and_lands_or_is_stopped(self) -> None:
+        answer_events()
+        enemy = state().get("enemy")
+        if not enemy:
+            self.skipTest("the enemy is gone")
+        slot, name, why = None, "", ""
+        for w in state()["ship"]["weapons"]:
+            r = act("weapon", w["id"], "on")
+            if r.returncode == 0:
+                slot, name = w["id"], w["name"]
+                break
+            why = r.stderr.strip()
+        if slot is None:
+            self.skipTest(f"no weapon can be powered now: {why}")
+        r = act("target", slot, enemy["rooms"][0]["id"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        new_events()
+        answer_events_and_unpause(self)
+        seen: list[dict[str, Any]] = []
+        for _ in range(60):
+            time.sleep(0.5)
+            seen += new_events()
+            if any(e["type"] == "fired" and e["by"] == "us" for e in seen) and any(
+                e["type"] in ("hit", "shield_block", "miss") and e.get("target") == "enemy"
+                for e in seen
+            ):
+                break
+            if not state().get("enemy"):
+                self.skipTest("the enemy left mid-test")
+        ours = [e for e in seen if e["type"] == "fired" and e["by"] == "us"]
+        self.assertTrue(ours, seen[-10:])
+        self.assertEqual(ours[0]["weapon"], f"{slot} ({name})")
+
+    def test_autofire_toggles(self) -> None:
+        self.assertEqual(act("autofire", "on").returncode, 0)
+        time.sleep(0.1)
+        self.assertTrue(state().get("autofire"))
+        self.assertEqual(act("autofire", "off").returncode, 0)
+        time.sleep(0.1)
+        self.assertIsNone(state().get("autofire"))
+
+
 @unittest.skipUnless(
     os.environ.get("FTL_LIVE_DESTRUCTIVE"), "ends the Run; set FTL_LIVE_DESTRUCTIVE=1"
 )
@@ -530,6 +584,7 @@ def load_tests(
         LiveNavigationTest,
         LiveEventChoiceTest,
         LiveEnemyTest,
+        LiveCombatTest,
         LiveGameOverTest,
     )
     return unittest.TestSuite(loader.loadTestsFromTestCase(case) for case in order)

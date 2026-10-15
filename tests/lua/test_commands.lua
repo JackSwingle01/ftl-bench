@@ -507,3 +507,71 @@ t.test("move to an enemy room checks the enemy ship has it", function()
     )
     t.eq(select(2, C.plan("move crew:102 enemy:room:7", raw)), "no enemy:room:7")
 end)
+
+-- #7: combat. Weapons: 0 Artemis (powered), 1 Burst Laser (unpowered), 2 Heavy Laser; plus a beam.
+local function raw_in_fight()
+    local raw = raw_with_systems()
+    raw.player.weapons[2].powered = true
+    raw.player.weapons[4] = {
+        name = "Halberd Beam",
+        powered = true,
+        power = 3,
+        charge = 0,
+        charge_time = 17,
+        missiles = false,
+        beam = true,
+    }
+    raw.player.weapons[2].targets_needed = 3 -- a burst laser wants one point per shot
+    raw.enemy = raw_with_interior().player --[[@as RawEnemy]] -- an enemy with rooms 0-2
+    return raw
+end
+
+t.test("a burst weapon aims every shot at the one room given", function()
+    t.eq(
+        C.plan("target weapon:1 enemy:room:2", raw_in_fight()),
+        { kind = "target", slot = 1, rooms = { 2 } }
+    )
+end)
+
+t.test("target aims a powered weapon at an enemy room", function()
+    t.eq(
+        C.plan("target weapon:1 enemy:room:2", raw_in_fight()),
+        { kind = "target", slot = 1, rooms = { 2 } }
+    )
+end)
+
+t.test("a beam takes a start and an end room", function()
+    local raw = raw_in_fight()
+    t.eq(
+        C.plan("target weapon:3 enemy:room:0 enemy:room:2", raw),
+        { kind = "target", slot = 3, rooms = { 0, 2 } }
+    )
+    t.eq(
+        select(2, C.plan("target weapon:3 enemy:room:0", raw)),
+        "weapon:3 (Halberd Beam) is a beam: give a start and an end room"
+    )
+end)
+
+t.test("target refuses unpowered weapons, our own rooms, missing rooms and no enemy", function()
+    local raw = raw_in_fight()
+    t.eq(
+        select(2, C.plan("target weapon:2 enemy:room:0", raw)),
+        "weapon:2 (Heavy Laser) is not powered"
+    )
+    t.eq(
+        select(2, C.plan("target weapon:1 room:0", raw)),
+        "target an enemy room, like enemy:room:3"
+    )
+    t.eq(select(2, C.plan("target weapon:1 enemy:room:9", raw)), "no enemy:room:9")
+    t.eq(
+        select(2, C.plan("target weapon:1 enemy:room:0", raw_with_systems())),
+        "there is no enemy ship to target"
+    )
+end)
+
+t.test("untarget and autofire", function()
+    local raw = raw_in_fight()
+    t.eq(C.plan("untarget weapon:1", raw), { kind = "untarget", slot = 1 })
+    t.eq(C.plan("autofire on", raw), { kind = "autofire", on = true })
+    t.eq(select(2, C.plan("autofire maybe", raw)), "usage: autofire on|off")
+end)

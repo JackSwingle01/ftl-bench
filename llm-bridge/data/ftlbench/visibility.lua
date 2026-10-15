@@ -58,6 +58,9 @@ FtlBench = FtlBench or {}
 ---@field charge number   seconds charged
 ---@field charge_time number
 ---@field missiles boolean
+---@field targets_needed integer?  target points the game needs before it fires (one per shot; 2 for a beam)
+---@field beam boolean?
+---@field aimed boolean?
 
 ---@class RawDrone
 ---@field name string
@@ -142,6 +145,7 @@ FtlBench = FtlBench or {}
 ---@field map RawMap?
 ---@field event RawEvent?    the open event window, if any
 ---@field enemy RawEnemy?
+---@field autofire boolean?
 
 ---@class Observation
 ---@field views { state: table, map: table?, jumps: table? }
@@ -386,6 +390,7 @@ local function observe_power(ship, view)
             charge = tenths(w.charge),
             charge_time = tenths(w.charge_time),
             uses_missiles = w.missiles,
+            aimed = w.aimed or nil,
         }
     end
     view.drones = setmetatable({}, LIST)
@@ -599,10 +604,50 @@ end
 
 ---Events a human would notice, found by comparing this frame with the previous one.
 -- ponytail: a load that lands straight on the game-over screen has no previous frame, so no event.
+---Combat seen as it happens: shots, hits, shield blocks and misses (game hooks this frame).
+---@param raw RawState
+---@param hooks table[]
+---@param events table[]
+local function hook_events(raw, hooks, events)
+    local function room(ship_id, id)
+        local ship = ship_id == 0 and raw.player or raw.enemy
+        local r = ship and index_by(ship.rooms, "id")[id]
+        local label = r and room_label(r) or ("room:" .. id)
+        return (ship_id == 0 and "" or "enemy:") .. label
+    end
+    local target = { [0] = "us", [1] = "enemy" }
+    local enemy_weapons_seen = #hooks > 0
+        and raw.enemy ~= nil
+        and type(observe_enemy(raw, raw.enemy).weapons) == "table"
+    for _, h in ipairs(hooks) do
+        if h.kind == "fire" then
+            local e = { type = "fired", by = target[h.by] }
+            if h.by == 0 then
+                e.weapon = ("weapon:%d (%s)"):format(h.slot, h.weapon)
+            elseif enemy_weapons_seen then
+                e.weapon = ("enemy:weapon:%d (%s)"):format(h.slot, h.weapon) -- named only when visible
+            end
+            events[#events + 1] = e
+        elseif h.kind == "hit" then
+            events[#events + 1] = {
+                type = "hit",
+                target = target[h.ship],
+                room = room(h.ship, h.room),
+                damage = h.damage,
+            }
+        elseif h.kind == "shield" then
+            events[#events + 1] = { type = "shield_block", target = target[h.ship] }
+        elseif h.kind == "miss" then
+            events[#events + 1] = { type = "miss", target = target[h.ship] }
+        end
+    end
+end
+
 ---@param prev RawState?
 ---@param raw RawState
+---@param hooks table[]?
 ---@return table[]
-local function observe_events(prev, raw)
+local function observe_events(prev, raw, hooks)
     local events = {}
     if prev and prev.player and raw.player then
         room_events(raw, prev.player, raw.player, events)
@@ -627,6 +672,7 @@ local function observe_events(prev, raw)
     if prev then
         enemy_events(prev, raw, events)
     end
+    hook_events(raw, hooks or {}, events)
     if prev and raw.game_over and not prev.game_over then
         local event = run_result(raw)
         event.type = "game_over"
@@ -903,9 +949,9 @@ end
 ---Build the Observation and the new Visible events.
 ---@param prev RawState? raw state from the previous frame (nil on the first frame)
 ---@param raw RawState
----@param _hooks table[] game-hook occurrences since the previous frame
+---@param hooks table[] game-hook occurrences since the previous frame
 ---@return Observation
-function Visibility.observe(prev, raw, _hooks)
+function Visibility.observe(prev, raw, hooks)
     if not raw.in_run then
         return {
             views = { state = { in_run = false, paused = false, frame = 0, game_time = 0 } },
@@ -924,9 +970,10 @@ function Visibility.observe(prev, raw, _hooks)
                 sector = raw.sector,
                 event = raw.event and observe_event(raw.event),
                 enemy = raw.enemy and observe_enemy(raw, raw.enemy),
+                autofire = raw.autofire or nil,
             },
         },
-        events = setmetatable(observe_events(prev, raw), LIST),
+        events = setmetatable(observe_events(prev, raw, hooks), LIST),
     }
     if raw.map then
         out.views.map = observe_map(raw, raw.map)
