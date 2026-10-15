@@ -4,6 +4,7 @@
 --
 -- Files live under the FTL save folder (Hyperspace's working directory):
 --   ftlbench/live/state.json    current state view, rewritten every frame
+--   ftlbench/live/map.json, jumps.json   map and jump views, rewritten every frame
 --   ftlbench/live/inbox.txt     Commands from the CLI: id \t wall_ms \t text
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
@@ -183,6 +184,74 @@ local function read_armaments(ship)
     return weapons, drones, weapon_objs, drone_objs
 end
 
+-- Beacons the ship has been next to this sector: their store/distress markers stay visible.
+local scouted, scouted_sector = {}, nil
+
+---@param loc any Location
+---@return string
+local function loc_key(loc)
+    return int(loc.loc.x) .. "," .. int(loc.loc.y)
+end
+
+---@param sm any StarMap
+---@param sector integer
+---@return RawMap
+local function read_map(sm, sector)
+    if scouted_sector ~= sector then
+        scouted, scouted_sector = {}, sector
+    end
+    local index = {}
+    for i = 0, sm.locations:size() - 1 do
+        index[loc_key(sm.locations[i])] = i
+    end
+    local current = sm.currentLoc and index[loc_key(sm.currentLoc)] or -1
+    local beacons = {}
+    for i = 0, sm.locations:size() - 1 do
+        local loc = sm.locations[i]
+        local links = {}
+        for j = 0, loc.connectedLocations:size() - 1 do
+            local other = index[loc_key(loc.connectedLocations[j])]
+            links[#links + 1] = other
+            if i == current then
+                scouted[other] = true
+            end
+        end
+        beacons[#beacons + 1] = {
+            id = i,
+            x = loc.loc.x,
+            y = loc.loc.y,
+            links = links,
+            visited = loc.visited > 0,
+            exit = loc.beacon,
+            quest = loc.questLoc,
+            nebula = loc.nebula,
+            store = loc.event ~= nil and loc.event.store,
+            distress = loc.event ~= nil and loc.event.distressBeacon,
+            scouted = scouted[i],
+        }
+    end
+    local choices
+    if current >= 0 and beacons[current + 1].exit then
+        choices = {}
+        for i = 0, sm.sectors:size() - 1 do
+            if sm:NeighboringSector(i) then
+                choices[#choices + 1] = { index = i, type = int(sm.sectors[i].type) }
+            end
+        end
+    end
+    return {
+        current = current,
+        beacons = beacons,
+        fleet = {
+            x = sm.dangerZone.x,
+            y = sm.dangerZone.y,
+            radius = sm.dangerZoneRadius,
+            advance = sm:GetNextDangerMove(),
+        },
+        sector_choices = choices,
+    }
+end
+
 -- Game objects behind the last raw state, for the executor.
 local door_objects, crew_objects, weapon_objects, drone_objects = {}, {}, {}, {}
 
@@ -231,6 +300,8 @@ local function read_raw()
         p.evasion, p.fuel = ship:GetDodgeFactor(), int(ship.fuel_count)
         p.missiles, p.drone_parts = int(ship:GetMissileCount()), int(ship:GetDroneCount())
         p.weapons, p.drones, weapon_objects, drone_objects = read_armaments(ship)
+        p.ftl_charge, p.ftl_charge_time = ship.jump_timer.first, ship.jump_timer.second
+        raw.map = read_map(app.world.starMap, raw.sector)
     end
     return raw
 end
@@ -276,6 +347,15 @@ local function execute(cmd)
         if int(sys.powerState.first) ~= target then
             return ("the game stopped the change at %d power"):format(int(sys.powerState.first))
         end
+    elseif cmd.kind == "jump" then
+        -- The game travels on its next update, as when the player clicks a beacon on the map.
+        local sm = Hyperspace.App.world.starMap
+        sm.potentialLoc = sm.locations[cmd.beacon]
+        sm.readyToTravel = true
+    elseif cmd.kind == "jump_sector" then
+        -- The map's own loop picks the sector (Hyperspace's sector-jump test does the same).
+        local sm = Hyperspace.App.world.starMap
+        sm.bOpen, sm.bChoosingNewSector, sm.finalSectorChoice = true, true, cmd.sector
     elseif cmd.kind == "weapon" then
         local ship = Hyperspace.ships.player
         local w = weapon_objects[cmd.slot + 1]
@@ -352,6 +432,11 @@ local function tick()
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
+    for _, view in ipairs({ "map", "jumps" }) do
+        if out.views[view] then
+            write_atomic(LIVE .. "/" .. view .. ".json", Json.encode(out.views[view]))
+        end
+    end
     if run_dir then
         for _, event in ipairs(out.events) do
             event.frame, event.game_time, event.wall_s = raw.frame, raw.game_time, os.time()

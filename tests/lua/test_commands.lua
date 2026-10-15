@@ -360,3 +360,67 @@ t.test("drones need drone parts and an un-ionized drones system", function()
         "system:drones is ionized; its power is locked until the ion wears off"
     )
 end)
+
+-- #10: jump. Current beacon 0 links to 1 and 3; beacon 2 is the exit (links to 1).
+local function raw_with_map()
+    local raw = raw_with_systems()
+    raw.player.fuel, raw.player.ftl_charge, raw.player.ftl_charge_time = 4, 1, 1
+    raw.map = {
+        current = 0,
+        beacons = {
+            { id = 0, x = 0, y = 0, links = { 1, 3 } },
+            { id = 1, x = 1, y = 0, links = { 0, 2 } },
+            { id = 2, x = 2, y = 0, links = { 1 }, exit = true },
+            { id = 3, x = 1, y = 1, links = { 0 } },
+        },
+        fleet = { x = -100, y = 0, radius = 10, advance = 10 },
+    }
+    return raw
+end
+
+t.test("jump resolves a linked beacon", function()
+    t.eq(C.plan("jump beacon:3", raw_with_map()), { kind = "jump", beacon = 3 })
+end)
+
+t.test("jump refuses beacons that aren't linked or don't exist", function()
+    local raw = raw_with_map()
+    t.eq(
+        select(2, C.plan("jump beacon:2", raw)),
+        "beacon:2 is not linked to the current beacon (beacon:0)"
+    )
+    t.eq(select(2, C.plan("jump beacon:9", raw)), "no beacon:9")
+    t.eq(select(2, C.plan("jump 3", raw)), "usage: jump <beacon> | jump <sector> (at the exit)")
+end)
+
+t.test("jump needs fuel and a charged FTL drive", function()
+    local raw = raw_with_map()
+    raw.player.fuel = 0
+    t.eq(select(2, C.plan("jump beacon:1", raw)), "no fuel")
+    raw = raw_with_map()
+    raw.player.ftl_charge = 0.25
+    t.eq(select(2, C.plan("jump beacon:1", raw)), "FTL drive charging (0.3 of 1.0)")
+end)
+
+t.test("jump refuses while an event is open", function()
+    local raw = raw_with_map()
+    raw.pause.event = true
+    t.eq(select(2, C.plan("jump beacon:1", raw)), "an event is open; answer it first")
+end)
+
+t.test("at the exit, jump picks one of the offered sectors", function()
+    local raw = raw_with_map()
+    raw.map.current = 2
+    raw.map.sector_choices = { { index = 5, type = 1 }, { index = 6, type = 2 } }
+    t.eq(C.plan("jump sector:6", raw), { kind = "jump_sector", sector = 6 })
+    t.eq(
+        select(2, C.plan("jump sector:4", raw)),
+        "sector:4 is not one of the next sectors (sector:5, sector:6)"
+    )
+end)
+
+t.test("sector jumps only work at the exit", function()
+    t.eq(
+        select(2, C.plan("jump sector:5", raw_with_map())),
+        "next sectors can only be chosen at the exit beacon"
+    )
+end)

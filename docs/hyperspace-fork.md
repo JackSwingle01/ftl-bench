@@ -11,6 +11,9 @@ Added so far:
 - `MainMenu.continueButton`, `MainMenu.startButton`, `ShipBuilder.startButton` (dev autostart).
 - `WeaponSystem.PowerWeapon`, `WeaponSystem.DePowerWeapon`, `DroneSystem.PowerDrone` (power weapons and drones the way
   the UI does).
+- `StarMap.readyToTravel`, `StarMap.finalSectorChoice`, `StarMap.NeighboringSector`, `StarMap.dangerZoneRadius`,
+  `StarMap.GetNextDangerMove`, `Sector.neighbors`, `Sector.type`, `Location.questLoc` (jumping, sector choice,
+  the fleet's advance, quest markers).
 - `CommandGui.gameover`, `CommandGui.alreadyWon`, `CommandGui.gameOverScreen`, `GameOver.bVictory` (game over and
   victory).
 

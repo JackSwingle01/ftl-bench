@@ -22,6 +22,14 @@ def ftl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def unpause_or_skip(case: unittest.TestCase) -> None:
+    """Unpause, or skip when an event window holds the game paused (answering events is #11)."""
+    r = ftl("unpause")
+    if r.returncode != 0 and "event is open" in r.stderr:
+        case.skipTest("an event is open; run on a fresh Run (scripts/dev-run new)")
+    assert r.returncode == 0, r.stderr
+
+
 def runs_dir() -> Path:
     default = Path.home() / "Library/Application Support/FasterThanLight/ftlbench"
     return Path(os.environ.get("FTL_BENCH_DIR", default)) / "runs"
@@ -59,7 +67,7 @@ class LiveGameTest(unittest.TestCase):
     def test_pause_and_unpause(self) -> None:
         self.assertEqual(ftl("pause").returncode, 0)
         self.assertEqual(state()["paused"], True)
-        self.assertEqual(ftl("unpause").returncode, 0)
+        unpause_or_skip(self)
         self.assertEqual(state()["paused"], False)
 
     def test_game_time_advances_only_while_unpaused(self) -> None:
@@ -67,7 +75,7 @@ class LiveGameTest(unittest.TestCase):
         before = state()["game_time"]
         self.assertEqual(ftl("wait", "1").returncode, 0)
         self.assertEqual(state()["game_time"], before)
-        ftl("unpause")
+        unpause_or_skip(self)
         before = state()["game_time"]
         self.assertEqual(ftl("wait", "1").returncode, 0)
         advanced = state()["game_time"] - before
@@ -145,7 +153,7 @@ class LiveShipTest(unittest.TestCase):
         mover = ship["crew"][0]
         target = next(r["id"] for r in ship["rooms"] if r["id"] != mover["room"])
         self.assertEqual(ftl("move", mover["id"], target).returncode, 0)
-        ftl("unpause")
+        unpause_or_skip(self)
         now = mover
         for _ in range(100):
             time.sleep(0.1)
@@ -235,7 +243,7 @@ class LiveEventsTest(unittest.TestCase):
     def test_suffocating_crew_produce_crew_hurt(self) -> None:
         new_events()
         ftl("door", "all", "open")
-        self.assertEqual(ftl("unpause").returncode, 0)
+        unpause_or_skip(self)
         seen: list[dict[str, Any]] = []
         for _ in range(90):
             time.sleep(1)
@@ -248,6 +256,59 @@ class LiveEventsTest(unittest.TestCase):
             self.assertIn(key, hurt)
         r = ftl("events", "history", "1")
         self.assertEqual(len(r.stdout.splitlines()), 1)
+
+
+def view(name: str) -> dict[str, Any]:
+    r = ftl(name)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+class LiveNavigationTest(unittest.TestCase):
+    """#10: the sector map and jumping."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+
+    def tearDown(self) -> None:
+        ftl("pause")
+
+    def test_map_has_one_current_beacon_one_exit_and_symmetric_links(self) -> None:
+        beacons = {b["id"]: b for b in view("map")["beacons"]}
+        self.assertGreater(len(beacons), 5)
+        self.assertEqual(sum(1 for b in beacons.values() if b.get("current")), 1)
+        self.assertEqual(sum(1 for b in beacons.values() if b.get("exit")), 1)
+        for b in beacons.values():
+            for link in b["links"]:
+                self.assertIn(b["id"], beacons[link]["links"])
+
+    def test_jump_to_a_linked_beacon_uses_one_fuel(self) -> None:
+        jumps = view("jumps")
+        self.assertTrue(jumps["ready"], jumps)
+        target, fuel = jumps["beacons"][0], jumps["fuel"]
+        r = ftl("jump", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        unpause_or_skip(self)
+        current = None
+        for _ in range(150):
+            time.sleep(0.1)
+            current = next(b["id"] for b in view("map")["beacons"] if b.get("current"))
+            if current == target:
+                break
+        self.assertEqual(current, target)
+        self.assertEqual(view("jumps")["fuel"], fuel - 1)
+
+    def test_jump_refuses_unlinked_beacons(self) -> None:
+        here = next(b for b in view("map")["beacons"] if b.get("current"))
+        far = next(
+            b["id"]
+            for b in view("map")["beacons"]
+            if b["id"] not in here["links"] and b is not here
+        )
+        r = ftl("jump", far)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("is not linked", r.stderr)
 
 
 @unittest.skipUnless(

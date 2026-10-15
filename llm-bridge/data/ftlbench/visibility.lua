@@ -80,6 +80,27 @@ FtlBench = FtlBench or {}
 ---@field drone_parts integer?
 ---@field weapons RawWeapon[]?    in slot order
 ---@field drones RawDrone[]?      in slot order
+---@field ftl_charge number?
+---@field ftl_charge_time number?
+
+---@class RawBeacon
+---@field id integer
+---@field x number         map pixels
+---@field y number
+---@field links integer[]
+---@field visited boolean?
+---@field exit boolean?
+---@field quest boolean?
+---@field nebula boolean?
+---@field store boolean?    true even where a human can't see it yet
+---@field distress boolean?
+---@field scouted boolean?  the ship has been next to it this sector
+
+---@class RawMap
+---@field current integer
+---@field beacons RawBeacon[]
+---@field fleet { x: number, y: number, radius: number, advance: number }
+---@field sector_choices { index: integer, type: integer }[]?  only at the exit beacon
 
 ---@class RawState
 ---@field in_run boolean
@@ -92,9 +113,10 @@ FtlBench = FtlBench or {}
 ---@field victory boolean?
 ---@field score integer?      FTL's running Score; the game only shows it when the Run ends
 ---@field player RawShip?
+---@field map RawMap?
 
 ---@class Observation
----@field views { state: table }
+---@field views { state: table, map: table?, jumps: table? }
 ---@field events table[]
 
 local Visibility = {}
@@ -452,6 +474,97 @@ local function observe_events(prev, raw)
     return events
 end
 
+local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1
+
+---Jumps until the rebel fleet's circle reaches a point, at its current advance per jump.
+---@param fleet { x: number, y: number, radius: number, advance: number }
+---@param b RawBeacon
+---@return integer?
+local function jumps_until_fleet(fleet, b)
+    local gap = math.sqrt((b.x - fleet.x) ^ 2 + (b.y - fleet.y) ^ 2) - fleet.radius
+    if gap < 0 then
+        return 0
+    elseif fleet.advance <= 0 then
+        return nil
+    end
+    return math.ceil(gap / fleet.advance)
+end
+
+---@param map RawMap
+---@return table<integer, boolean>
+local function adjacent_to_current(map)
+    local near = {}
+    for _, b in ipairs(map.beacons) do
+        if b.id == map.current then
+            for _, l in ipairs(b.links) do
+                near[l] = true
+            end
+        end
+    end
+    return near
+end
+
+---@param raw RawState
+---@param map RawMap
+local function observe_map(raw, map)
+    local near = adjacent_to_current(map)
+    local beacons = setmetatable({}, LIST)
+    for i, b in ipairs(map.beacons) do
+        local links = setmetatable({}, LIST)
+        for j, l in ipairs(b.links) do
+            links[j] = "beacon:" .. l
+        end
+        -- Store and distress markers show for beacons within one jump, and stay afterwards.
+        local scouted = near[b.id] or b.scouted or b.visited
+        local until_fleet = jumps_until_fleet(map.fleet, b)
+        beacons[i] = {
+            id = "beacon:" .. b.id,
+            x = round(b.x),
+            y = round(b.y),
+            links = links,
+            current = b.id == map.current or nil,
+            visited = b.visited or nil,
+            exit = b.exit or nil,
+            quest = b.quest or nil,
+            nebula = b.nebula or nil,
+            store = scouted and b.store or nil,
+            distress = scouted and b.distress or nil,
+            fleet = until_fleet == 0 or nil,
+            jumps_until_fleet = until_fleet,
+        }
+    end
+    return { sector = raw.sector, beacons = beacons }
+end
+
+---@param raw RawState
+---@param map RawMap
+local function observe_jumps(raw, map)
+    local ship = raw.player or {}
+    local here = setmetatable({}, LIST)
+    for _, b in ipairs(map.beacons) do
+        if b.id == map.current then
+            for j, l in ipairs(b.links) do
+                here[j] = "beacon:" .. l
+            end
+        end
+    end
+    local sectors = setmetatable({}, LIST)
+    for i, s in ipairs(map.sector_choices or {}) do
+        sectors[i] = { id = "sector:" .. s.index, type = SECTOR_TYPES[s.type + 1] }
+    end
+    local fuel, charge, time = ship.fuel or 0, ship.ftl_charge or 0, ship.ftl_charge_time or 1
+    local not_ready = (fuel < 1 and "no fuel") or (charge < time and "FTL drive charging") or nil
+    return {
+        beacons = here,
+        sectors = sectors,
+        fuel = fuel,
+        ftl_charge = tenths(charge),
+        ftl_charge_time = tenths(time),
+        ready = not_ready == nil,
+        not_ready = not_ready,
+    }
+end
+
 ---Build the Observation and the new Visible events.
 ---@param prev RawState? raw state from the previous frame (nil on the first frame)
 ---@param raw RawState
@@ -477,6 +590,10 @@ function Visibility.observe(prev, raw, _hooks)
         },
         events = setmetatable(observe_events(prev, raw), LIST),
     }
+    if raw.map then
+        out.views.map = observe_map(raw, raw.map)
+        out.views.jumps = observe_jumps(raw, raw.map)
+    end
     if raw.game_over then
         local state = out.views.state
         local result = run_result(raw)

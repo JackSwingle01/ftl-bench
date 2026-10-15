@@ -4,7 +4,7 @@
 FtlBench = FtlBench or {}
 
 ---@class ResolvedCommand
----@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"
+---@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"
 ---@field seconds number?   wait
 ---@field crew integer?     move: crew uid
 ---@field room integer?     move: room id
@@ -15,6 +15,8 @@ FtlBench = FtlBench or {}
 ---@field delta integer?    power: change in power
 ---@field slot integer?     weapon, drone: slot index
 ---@field on boolean?       weapon, drone
+---@field beacon integer?   jump
+---@field sector integer?   jump_sector: index of the chosen sector
 
 local Commands = {}
 
@@ -171,6 +173,78 @@ local function plan_armament(kind, args, raw)
     return { kind = kind, slot = slot, on = state == "on" }
 end
 
+local JUMP_USAGE = "usage: jump <beacon> | jump <sector> (at the exit)"
+
+---Round to one decimal the way the state view does (string.format rounds 0.25 down).
+---@param n number
+---@return number
+local function tenth(n)
+    return math.floor(n * 10 + 0.5) / 10
+end
+
+---@param map RawMap
+---@param id integer
+---@return RawBeacon?
+local function find_beacon(map, id)
+    for _, b in ipairs(map.beacons) do
+        if b.id == id then
+            return b
+        end
+    end
+    return nil
+end
+
+---@param args string[]
+---@param raw RawState
+---@return ResolvedCommand?, string?
+local function plan_jump(args, raw)
+    local map, ship = raw.map, raw.player --[[@as RawShip]]
+    local beacon = #args == 1 and parse_id(args[1], "beacon") or nil
+    local sector = #args == 1 and parse_id(args[1], "sector") or nil
+    if not (beacon or sector) or not map then
+        return nil, JUMP_USAGE
+    elseif raw.pause.event then
+        return nil, "an event is open; answer it first"
+    elseif (ship.fuel or 0) < 1 then
+        return nil, "no fuel"
+    elseif (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1) then
+        return nil,
+            ("FTL drive charging (%.1f of %.1f)"):format(
+                tenth(ship.ftl_charge),
+                tenth(ship.ftl_charge_time)
+            )
+    end
+    local here = find_beacon(map, map.current) --[[@as RawBeacon]]
+    if sector then
+        if not here.exit then
+            return nil, "next sectors can only be chosen at the exit beacon"
+        end
+        local offered = {}
+        for _, s in ipairs(map.sector_choices or {}) do
+            if s.index == sector then
+                return { kind = "jump_sector", sector = sector }
+            end
+            offered[#offered + 1] = "sector:" .. s.index
+        end
+        return nil,
+            ("sector:%d is not one of the next sectors (%s)"):format(
+                sector,
+                table.concat(offered, ", ")
+            )
+    end
+    beacon = beacon --[[@as integer]]
+    if not find_beacon(map, beacon) then
+        return nil, "no beacon:" .. beacon
+    end
+    for _, l in ipairs(here.links) do
+        if l == beacon then
+            return { kind = "jump", beacon = beacon }
+        end
+    end
+    return nil,
+        ("beacon:%d is not linked to the current beacon (beacon:%d)"):format(beacon, map.current)
+end
+
 ---@param arg string?
 ---@return ResolvedCommand?, string?
 local function plan_wait(arg)
@@ -264,6 +338,7 @@ local handlers = {
     move = plan_move,
     door = plan_door,
     power = plan_power,
+    jump = plan_jump,
     weapon = function(args, raw)
         return plan_armament("weapon", args, raw)
     end,

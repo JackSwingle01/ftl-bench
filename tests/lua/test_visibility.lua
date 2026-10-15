@@ -465,3 +465,101 @@ t.test("events are lists, so they encode as JSON arrays", function()
     local before, after = two_frames()
     t.eq(getmetatable(events(before, after)).__jsontype, "array")
 end)
+
+-- #10: the sector map. Beacons (map pixels):
+--   0 current (50,100) -- 1 (150,100) -- 2 exit (250,100); 0 -- 3 (150,200) -- 4 quest (250,200)
+-- Fleet: centre (-200,100), radius 280, advancing 100 per jump. Beacon 0 is 250 from the centre.
+---@return RawState
+local function raw_with_map()
+    local raw = raw_with_systems()
+    raw.player.fuel = 5
+    raw.player.ftl_charge, raw.player.ftl_charge_time = 1, 1
+    raw.map = {
+        current = 0,
+        beacons = {
+            { id = 0, x = 50, y = 100, links = { 1, 3 }, visited = true },
+            { id = 1, x = 150, y = 100, links = { 0, 2 }, store = true, distress = false },
+            { id = 2, x = 250, y = 100, links = { 1 }, exit = true, store = true },
+            { id = 3, x = 150, y = 200, links = { 0, 4 }, nebula = true, distress = true },
+            { id = 4, x = 250, y = 200, links = { 3 }, quest = true, distress = true },
+        },
+        fleet = { x = -200, y = 100, radius = 280, advance = 100 },
+    }
+    return raw
+end
+
+local function map_view(raw)
+    return V.observe(nil, raw, {}).views.map
+end
+
+t.test("map lists every beacon with position, links and always-visible markers", function()
+    local b = map_view(raw_with_map()).beacons
+    t.eq(b[1], {
+        id = "beacon:0",
+        x = 50,
+        y = 100,
+        links = { "beacon:1", "beacon:3" },
+        current = true,
+        visited = true,
+        fleet = true,
+        jumps_until_fleet = 0,
+    })
+    t.eq({ b[3].exit, b[4].nebula, b[5].quest }, { true, true, true })
+end)
+
+t.test("store and distress markers show only within one jump", function()
+    local b = map_view(raw_with_map()).beacons
+    t.eq({ b[2].store, b[4].distress }, { true, true }) -- adjacent to the current beacon
+    t.eq({ b[3].store, b[5].distress }, { nil, nil }) -- two jumps away
+end)
+
+t.test("markers stay once a beacon has been next to the ship", function()
+    local raw = raw_with_map()
+    raw.map.beacons[3].scouted = true
+    t.eq(map_view(raw).beacons[3].store, true)
+end)
+
+t.test("jumps until the fleet reaches each beacon", function()
+    local b = map_view(raw_with_map()).beacons
+    -- distances from the fleet centre: 350, 450, 380, 474; radius 280, +100 per jump
+    t.eq({ b[2].jumps_until_fleet, b[3].jumps_until_fleet }, { 1, 2 })
+    t.eq({ b[4].jumps_until_fleet, b[5].jumps_until_fleet }, { 1, 2 })
+end)
+
+t.test("the map reports the sector", function()
+    local raw = raw_with_map()
+    raw.sector = 3
+    t.eq(map_view(raw).sector, 3)
+end)
+
+t.test("jumps lists linked beacons, fuel and FTL charge", function()
+    t.eq(V.observe(nil, raw_with_map(), {}).views.jumps, {
+        beacons = { "beacon:1", "beacon:3" },
+        fuel = 5,
+        ftl_charge = 1,
+        ftl_charge_time = 1,
+        ready = true,
+        sectors = {},
+    })
+end)
+
+t.test("jumps says why it can't jump", function()
+    local raw = raw_with_map()
+    raw.player.fuel = 0
+    local j = V.observe(nil, raw, {}).views.jumps --[[@as table]]
+    t.eq({ j.ready, j.not_ready }, { false, "no fuel" })
+    raw = raw_with_map()
+    raw.player.ftl_charge = 0.4
+    j = V.observe(nil, raw, {}).views.jumps --[[@as table]]
+    t.eq({ j.ready, j.not_ready }, { false, "FTL drive charging" })
+end)
+
+t.test("at the exit, jumps offers the next sectors by type only", function()
+    local raw = raw_with_map()
+    raw.map.current = 2
+    raw.map.sector_choices = { { index = 5, type = 1 }, { index = 6, type = 2 } }
+    t.eq(V.observe(nil, raw, {}).views.jumps.sectors, {
+        { id = "sector:5", type = "hostile" },
+        { id = "sector:6", type = "nebula" },
+    })
+end)

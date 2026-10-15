@@ -7,6 +7,8 @@ MODE="${1:-continue}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SAVE="$HOME/Library/Application Support/FasterThanLight"
 pkill -f "$ROOT/game/FTL.app" && sleep 2 || true
+# Closing FTL this way looks like a crash to Hyperspace, whose popup would block the autostart.
+rm -f "$SAVE/hs_crash.flag"
 "$ROOT/scripts/install-mod" --dev >/dev/null
 mkdir -p "$SAVE/ftlbench/live"
 echo "$MODE" > "$SAVE/ftlbench/autostart"
