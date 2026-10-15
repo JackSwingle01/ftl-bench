@@ -102,6 +102,15 @@ class LiveGameTest(unittest.TestCase):
         answer_events_and_unpause(self)
         self.assertEqual(state()["paused"], False)
 
+    def test_reading_the_map_opens_a_window_that_blocks_nothing(self) -> None:
+        answer_events()
+        for view_name in ("map", "upgrades"):
+            self.assertEqual(ftl(view_name).returncode, 0)
+            time.sleep(0.2)
+            self.assertNotIn("menu", state().get("paused_by") or [])
+        answer_events_and_unpause(self)
+        self.assertEqual(state()["paused"], False)
+
     def test_game_time_advances_only_while_unpaused(self) -> None:
         ftl("pause")
         before = state()["game_time"]
@@ -723,6 +732,129 @@ class LiveGameOverTest(unittest.TestCase):
         )
 
 
+def give_system(type_id: int) -> None:
+    """Dev-probe fixture: install a system in the ship's room for it."""
+    request = runs_dir().parent / "dev_give"
+    request.write_text(f"system {type_id}\n")
+    for _ in range(50):  # the next request would overwrite this one
+        time.sleep(0.1)
+        if not request.exists():
+            return
+    raise AssertionError("the dev probe did not take the request (installed? scripts/dev-run)")
+
+
+def walk(crew_id: str, room: str) -> bool:
+    """Move a crew member and let the game run until they arrive."""
+    if act("move", crew_id, room).returncode != 0:
+        return False
+    answer_events_and_unpause_quietly()
+    for _ in range(80):
+        time.sleep(0.1)
+        if next(c for c in state()["ship"]["crew"] if c["id"] == crew_id)["room"] == room:
+            ftl("pause")
+            return True
+    return False
+
+
+def answer_events_and_unpause_quietly() -> None:
+    answer_events()
+    act("unpause")
+
+
+class LiveAbilityTest(unittest.TestCase):
+    """#8: system abilities, with the systems installed by the dev fixture and a spawned fight."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+        have = {s["name"] for s in state()["ship"]["systems"]}
+        for type_id, name in (
+            (10, "cloaking"),
+            (12, "battery"),
+            (15, "hacking"),
+            (14, "mind_control"),
+            (9, "teleporter"),
+        ):
+            if name not in have:
+                give_system(type_id)
+        if "hacking" not in have:
+            # The game registers a new hacking drone with space on the next jump (as after buying).
+            leave_any_fight()
+            act("jump", pick_jump(wait_until_jump_ready()))
+            ftl("unpause")
+            time.sleep(3)
+        give_scrap(200)
+        for _ in range(4):  # spare reactor bars for the new systems
+            act("upgrade", "reactor")
+        if not find_enemy():
+            raise unittest.SkipTest("no hostile enemy")
+
+    def ability(self, name: str) -> dict[str, Any]:
+        return state()["ship"]["abilities"].get(name, {})
+
+    def test_cloak_and_battery_turn_on(self) -> None:
+        for command, name in (("cloak", "cloak"), ("battery", "battery")):
+            r = act(command)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            time.sleep(0.2)
+            self.assertTrue(self.ability(name).get("on"), f"{name} should be on")
+
+    def test_hacking_drone_attaches_and_pulses(self) -> None:
+        enemy = find_enemy()
+        if not enemy:
+            self.skipTest("no hostile enemy")
+        room = enemy["systems"][0]["room"]
+        r = act("hack", room)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        answer_events_and_unpause_quietly()
+        for _ in range(250):  # the drone flies across slowly
+            time.sleep(0.1)
+            if self.ability("hacking").get("drone"):
+                break
+        ftl("pause")
+        self.assertTrue(self.ability("hacking").get("drone"), "the hacking drone should attach")
+        r = act("hack")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_mind_control_takes_a_visible_enemy(self) -> None:
+        enemy = find_enemy()
+        if not enemy:
+            self.skipTest("no hostile enemy")
+        if not enemy.get("crew"):  # Sensors level 2 shows the enemy's interior
+            give_scrap(100)
+            act("upgrade", "sensors")
+            act("power", "sensors", "+1")
+            enemy = find_enemy() or {}
+        if not enemy.get("crew"):
+            self.skipTest("no enemy crew visible")
+        r = act("mindcontrol", enemy["crew"][0]["id"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.ability("mind").get("controlling"), "an enemy should be controlled")
+
+    def test_teleport_sends_crew_over(self) -> None:
+        enemy = find_enemy()
+        if not enemy:
+            self.skipTest("no hostile enemy")
+        if system("teleporter")["power"] < 1:
+            self.assertEqual(act("power", "teleporter", "+1").returncode, 0)
+        tele_room = system("teleporter")["room"]
+        crew = state()["ship"]["crew"][-1]
+        if not walk(crew["id"], tele_room):
+            self.skipTest("crew could not reach the teleporter")
+        r = act("teleport", "send", enemy["rooms"][0]["id"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        answer_events_and_unpause_quietly()
+        aboard = False
+        for _ in range(60):
+            time.sleep(0.1)
+            me = next(c for c in state()["ship"]["crew"] if c["id"] == crew["id"])
+            if me["room"].startswith("enemy:"):
+                aboard = True
+                break
+        ftl("pause")
+        self.assertTrue(aboard, "the crew member should be aboard the enemy ship")
+
+
 def load_tests(
     loader: unittest.TestLoader, _tests: unittest.TestSuite, _pattern: str | None
 ) -> unittest.TestSuite:
@@ -739,6 +871,7 @@ def load_tests(
         LiveCombatTest,
         LiveUpgradeTest,
         LiveStoreTest,
+        LiveAbilityTest,
         LiveGameOverTest,
     )
     return unittest.TestSuite(loader.loadTestsFromTestCase(case) for case in order)

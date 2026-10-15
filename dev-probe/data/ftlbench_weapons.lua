@@ -99,6 +99,47 @@ local function dump()
         cc.weapControl.autoFiring
     )
     p("== current_target", ship.current_target)
+    local function fields(label, obj, names)
+        if not obj then
+            return p("== " .. label, "none")
+        end
+        local parts = { "== " .. label }
+        for _, f in ipairs(names) do
+            local ok, v = pcall(function()
+                return obj[f]
+            end)
+            parts[#parts + 1] = f .. "=" .. tostring(ok and v or "n/a")
+        end
+        p(table.concat(parts, " "))
+    end
+    fields("cloak", ship.cloakSystem, { "bTurnedOn", "timer", "powerState" })
+    fields("battery", ship.batterySystem, { "bTurnedOn", "powerState" })
+    fields("hacking", ship.hackingSystem, {
+        "bHacking",
+        "bArmed",
+        "bCanHack",
+        "bBlocked",
+        "drone",
+        "queuedSystem",
+        "currentSystem",
+        "effectTimer",
+        "spendDrone",
+    })
+    fields("mind", ship.mindSystem, {
+        "bCanUse",
+        "iArmed",
+        "controlTimer",
+        "iQueuedTarget",
+        "iQueuedShip",
+        "queuedCrew",
+        "controlledCrew",
+        "bBlocked",
+    })
+    fields(
+        "teleport",
+        ship.teleportSystem,
+        { "chargeLevel", "bCanSend", "bCanReceive", "iArmed", "iPreparedCrew", "iNumSlots" }
+    )
     local f = assert(io.open("ftlbench/probe_weapons.txt", "w"))
     f:write(table.concat(out, "\n") .. "\n")
     f:close()

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Trial run: a headless Claude Code agent plays the live Run through the `ftl` CLI.
+# Usage: scripts/agent-run [model] [minutes]   (defaults: haiku, 20)
+# Start a Run first (scripts/dev-run new). The agent may only run `ftl` and `jq`; it starts in an
+# empty folder; its transcript is saved next to the Run's Action log.
+set -euo pipefail
+MODEL="${1:-haiku}"
+MINUTES="${2:-20}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BASE="$HOME/Library/Application Support/FasterThanLight/ftlbench"
+RUN_DIR="$BASE/$(cat "$BASE/live/run.txt")"
+WORK="$(mktemp -d -t ftl-agent)"
+cd "$WORK"
+export PATH="$ROOT/bin:$PATH"
+( sleep $((MINUTES * 60)); pkill -f "ftl-agent-run-$$" || true ) &
+WATCHDOG=$!
+echo "agent: $MODEL for up to ${MINUTES}m; transcript: $RUN_DIR/transcript.jsonl"
+claude -p "$(cat "$ROOT/prompts/task.md")" \
+    --model "$MODEL" \
+    --allowedTools "Bash(ftl:*)" "Bash(jq:*)" \
+    --output-format stream-json --verbose \
+    --append-system-prompt "ftl-agent-run-$$" \
+    > "$RUN_DIR/transcript.jsonl" || true
+kill "$WATCHDOG" 2>/dev/null || true
+echo "agent finished"

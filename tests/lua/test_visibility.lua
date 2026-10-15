@@ -670,6 +670,12 @@ t.test("an event window is reported as an event, not also as a menu", function()
     t.eq(V.observe(nil, raw, {}).views.state.paused_by, { "event" })
 end)
 
+t.test("a peek window opened by ftl map/upgrades isn't reported as a blocking menu", function()
+    local raw = raw_in_run()
+    raw.pause.menu, raw.peek_window = true, true
+    t.eq(V.observe(nil, raw, {}).views.state.paused_by, nil)
+end)
+
 -- #6: the enemy ship. Two rooms: 0 (weapons), 1 (shields). One door. Two crew: Grub in room 0 (human),
 -- Krix in room 1 (mantis). Our Sensors: level 1, unmanned, so no enemy interior unless stated.
 ---@return RawState
@@ -1163,4 +1169,13 @@ t.test("a destroyed enemy ship shows as destroyed", function()
     raw.enemy.destroyed = true
     t.eq(enemy_view(raw).destroyed, true)
     t.eq(enemy_view(raw_with_enemy()).destroyed, nil)
+end)
+
+t.test("our ability status is shown", function()
+    local raw = raw_with_systems()
+    raw.player.abilities = { cloak = { on = true }, teleporter = { charged = false, charge = 40 } }
+    t.eq(V.observe(nil, raw, {}).views.state.ship.abilities, {
+        cloak = { on = true },
+        teleporter = { charged = false, charge = 40 },
+    })
 end)

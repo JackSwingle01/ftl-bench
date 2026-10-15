@@ -70,6 +70,9 @@ local KEY_AUTOFIRE = hotkey("autofire", 118)
 local KEY_ESCAPE = 27 -- SDLK_ESCAPE: closes the open window (not rebindable)
 local KEY_OPEN_DOORS, KEY_CLOSE_DOORS = hotkey("open", 122), hotkey("close", 120)
 local KEY_STORE = hotkey("store", 0) -- unbound by default; scripts/install-mod binds it
+local KEY_CLOAK, KEY_BATTERY = hotkey("activate_cloak", 99), hotkey("activate_battery", 98)
+local KEY_HACK = hotkey("start_hacking", 110)
+local KEY_MAP, KEY_UPGRADES = hotkey("jump", 106), hotkey("ship_info", 117)
 
 -- Power hotkeys by FTL system type id: the player's key to add power and (bound by
 -- scripts/install-mod) to remove it.
@@ -205,7 +208,8 @@ local function read_systems(ship)
             room = int(y.roomId),
             power = int(y.powerState.first),
             level = int(y.powerState.second),
-            cap = int(y:GetPowerCap()),
+            -- Damaged bars can't hold power: the most it takes is its cap or its undamaged bars.
+            cap = math.min(int(y:GetPowerCap()), int(y.healthState.first)),
             damage = int(y.healthState.second - y.healthState.first),
             ion = math.max(int(y.iLockCount), 0),
             uses_reactor = y.bNeedsPower,
@@ -339,6 +343,12 @@ local function read_event(gui)
     return { text = box.mainText, choices = choices, received = read_resources(box.rewards) }
 end
 
+-- A window opened only so a watcher can see what the Agent reads (`ftl map`, `ftl upgrades`).
+local peek_window = false
+
+-- Enemy crew objects by uid, for mind control (filled by read_enemy).
+local enemy_crew_objects = {}
+
 ---The enemy ship, if one is here. Raw state holds everything; Visibility decides what is shown.
 ---@param ship any ShipManager
 ---@param player any ShipManager
@@ -346,6 +356,8 @@ end
 local function read_enemy(ship, player)
     local shields = ship:GetShieldPower()
     local weapons, drones = read_armaments(ship)
+    local enemy_crew
+    enemy_crew, enemy_crew_objects = read_crew(ship, 1)
     local hacked
     local hacking = player.hackingSystem
     if hacking and hacking.drone and hacking.drone.arrived and hacking.currentSystem then
@@ -369,7 +381,7 @@ local function read_enemy(ship, player)
         systems = read_systems(ship),
         weapons = weapons,
         drones = drones,
-        crew = (read_crew(ship, 1)),
+        crew = enemy_crew,
         hacked_system = hacked,
         hacking_powered = hacking ~= nil and int(hacking.powerState.first) > 0,
     }
@@ -452,6 +464,32 @@ local function read_upgrades(ship)
     }
 end
 
+---Status of our ability systems, for the ones this ship has.
+---@param ship any ShipManager
+---@return table<string, table>
+local function read_abilities(ship)
+    local a = {}
+    if ship.cloakSystem then
+        a.cloak = { on = ship.cloakSystem.bTurnedOn }
+    end
+    if ship.batterySystem then
+        a.battery = { on = ship.batterySystem.bTurnedOn }
+    end
+    if ship.hackingSystem then
+        local drone = ship.hackingSystem.drone
+        a.hacking =
+            { drone = drone ~= nil and drone.arrived, pulsing = ship.hackingSystem.bHacking }
+    end
+    if ship.mindSystem then
+        a.mind = { controlling = ship.mindSystem.controlledCrew:size() > 0 }
+    end
+    if ship.teleportSystem then
+        local charge = int(ship.teleportSystem.chargeLevel)
+        a.teleporter = { charged = charge >= 100, charge = charge }
+    end
+    return a
+end
+
 -- Game objects behind the last raw state, for the executor.
 local door_objects, crew_objects, weapon_objects, drone_objects, store_boxes = {}, {}, {}, {}, {}
 
@@ -509,6 +547,8 @@ local function read_raw()
         local enemy = Hyperspace.ships.enemy
         raw.enemy = enemy and read_enemy(enemy, ship) or nil
         raw.autofire = gui.combatControl.weapControl.autoFiring
+        p.abilities = read_abilities(ship)
+        raw.peek_window = peek_window and raw.pause.menu or nil
         raw.map = read_map(app.world.starMap, raw.sector)
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
@@ -633,6 +673,47 @@ local function execute(cmd)
         -- Escape closes the store the way a player does, clearing the game's window pause too
         -- (Store:Close() alone left it set). Commands only allows this while a store is open.
         press(KEY_ESCAPE)
+    elseif cmd.kind == "cloak" or cmd.kind == "battery" then
+        local ship = Hyperspace.ships.player
+        local sys = cmd.kind == "cloak" and ship.cloakSystem or ship.batterySystem
+        press(cmd.kind == "cloak" and KEY_CLOAK or KEY_BATTERY)
+        if not sys.bTurnedOn then
+            return ("the game did not turn %s on (cooling down?)"):format(cmd.kind)
+        end
+    elseif cmd.kind == "hack" then
+        -- An aimed click queues the target system and disarms; the game then launches the drone.
+        local ship, enemy = Hyperspace.ships.player, Hyperspace.ships.enemy
+        if not enemy then
+            return "the enemy ship is gone"
+        end
+        ship.hackingSystem.queuedSystem = enemy:GetSystemInRoom(cmd.room)
+        ship.hackingSystem.bArmed = false
+    elseif cmd.kind == "hack_pulse" then
+        press(KEY_HACK)
+    elseif cmd.kind == "mindcontrol" then
+        local mind, crew = Hyperspace.ships.player.mindSystem, enemy_crew_objects[cmd.crew]
+        if not crew then
+            return "that crew member is gone"
+        end
+        mind.iQueuedTarget, mind.iQueuedShip = int(crew.iRoomId), 1
+        mind.queuedCrew:clear()
+        mind.queuedCrew:push_back(crew)
+        mind:InitiateMindControl()
+        if mind.controlledCrew:size() == 0 then
+            return "the game did not take control (charging, or the target is shielded?)"
+        end
+    elseif cmd.kind == "teleport" then
+        Hyperspace.App.world.playerShip:InitiateTeleport(cmd.room, cmd.command)
+    elseif cmd.kind == "show" then
+        -- Open the window the Agent is reading, for anyone watching; only over the plain ship view.
+        local gui = Hyperspace.App.gui
+        if peek_window and gui.menu_pause then
+            press(KEY_ESCAPE) -- swap our own peek window for the new one
+        end
+        if not (gui.menu_pause or gui.event_pause) then
+            press(cmd.window == "map" and KEY_MAP or KEY_UPGRADES)
+            peek_window = true
+        end
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
         if Hyperspace.App.gui.combatControl.weapControl.autoFiring ~= cmd.on then
@@ -690,6 +771,13 @@ local function handle_inbox(raw)
         local id, wall_ms, text = line:match("^([^\t]*)\t([^\t]*)\t(.*)$")
         if id then
             local cmd, err = Commands.plan(text, raw)
+            local passive = cmd and (cmd.kind == "show" or cmd.kind == "pause")
+            if cmd and not passive and peek_window then
+                if Hyperspace.App.gui.menu_pause then
+                    press(KEY_ESCAPE) -- close the peek window before acting
+                end
+                peek_window = false
+            end
             if cmd then
                 local ok, result = pcall(execute, cmd)
                 -- Always answer, so the CLI never waits on a Command that broke mid-way.

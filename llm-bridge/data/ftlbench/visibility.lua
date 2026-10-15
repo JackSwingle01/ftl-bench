@@ -88,6 +88,7 @@ FtlBench = FtlBench or {}
 ---@field weapons RawWeapon[]?    in slot order
 ---@field drones RawDrone[]?      in slot order
 ---@field ftl_charge number?
+---@field abilities table<string, table>?  cloak/battery/hacking/mind/teleporter status (own ship: visible)
 ---@field ftl_charge_time number?
 
 ---@class RawBeacon
@@ -157,6 +158,7 @@ FtlBench = FtlBench or {}
 ---@field autofire boolean?
 ---@field store { open: boolean, items: RawStoreItem[] }?  the store at this beacon, if any
 ---@field upgrades RawUpgrades?
+---@field peek_window boolean?  a window opened by `ftl map`/`ftl upgrades`; closed before the next action
 
 ---@class Observation
 ---@field views { state: table, map: table?, jumps: table?, store: table?, upgrades: table? }
@@ -208,8 +210,9 @@ end
 ---@return string[]?
 local function paused_by(raw)
     local p, out = raw.pause, nil
-    -- The game also sets its menu pause for an event window, so "menu" means any other window.
-    local menu = p.menu and not p.event
+    -- The game also sets its menu pause for an event window, so "menu" means any other window;
+    -- a peek window closes itself before the next action, so it blocks nothing.
+    local menu = p.menu and not p.event and not raw.peek_window
     for _, reason in ipairs({ { p.manual, "player" }, { p.event, "event" }, { menu, "menu" } }) do
         if reason[1] then
             out = out or setmetatable({}, LIST)
@@ -474,6 +477,7 @@ local function observe_ship(raw, ship)
     end
     observe_power(ship, view)
     observe_intruders(raw, lit, view)
+    view.abilities = ship.abilities
     return view
 end
 
@@ -884,6 +888,13 @@ local function observe_upgrades(raw)
         )
     end
     return { reactor = priced({ level = u.reactor.level }, u.reactor.cost), systems = systems }
+end
+
+---The enemy as we can see it right now (nil with no enemy ship), for rules such as "can target".
+---@param raw RawState
+---@return table?
+function Visibility.enemy_view(raw)
+    return raw.enemy and observe_enemy(raw, raw.enemy)
 end
 
 local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1

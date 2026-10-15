@@ -5,6 +5,7 @@ FtlBench = FtlBench or {}
 
 ---@class ResolvedCommand
 ---@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"|"choose"|"target"|"untarget"|"autofire"|"buy"|"upgrade"|"upgrade_reactor"|"close"
+---|"cloak"|"battery"|"hack"|"hack_pulse"|"mindcontrol"|"teleport"|"show"
 ---@field seconds number?   wait
 ---@field crew integer?     move: crew uid
 ---@field room integer?     move: room id
@@ -22,13 +23,16 @@ FtlBench = FtlBench or {}
 ---@field rooms integer[]?  target: enemy room ids (two for a beam)
 ---@field item integer?     buy: store item index
 ---@field cost integer?     upgrade: scrap it was checked against
+---@field command integer?  teleport: 1 send crew out, 2 bring them back
+---@field window string?    show: "map" or "upgrades"
 
 local Commands = {}
 
 -- Commands that still work while an event window is open.
-local EVENT_SAFE = { choose = true, wait = true, pause = true, unpause = true }
+local EVENT_SAFE = { choose = true, wait = true, pause = true, unpause = true, show = true }
 -- Commands that still work while another game window (store, upgrades, menu) is open.
-local WINDOW_SAFE = { close = true, buy = true, wait = true, pause = true, unpause = true }
+local WINDOW_SAFE =
+    { close = true, buy = true, wait = true, pause = true, unpause = true, show = true }
 
 local WAIT_ERROR = "wait takes 0.1 to 10 seconds in steps of 0.1"
 
@@ -309,6 +313,109 @@ local function plan_target(args, raw)
     return { kind = "target", slot = slot, rooms = rooms }
 end
 
+local CLOAKING, BATTERY, TELEPORTER, MIND, HACKING = 10, 12, 9, 14, 15
+
+---The ship's system of this type if it can be used now, else the reason it can't.
+---@param raw RawState
+---@param type integer
+---@return RawSystem?, string?
+local function usable_system(raw, type)
+    local id = FtlBench.Visibility.system_id(type)
+    local sys = find_system(raw, type)
+    if not sys then
+        return nil, ("no %s on this ship"):format(id)
+    elseif sys.ion > 0 then
+        return nil, locked(id)
+    elseif sys.power < 1 then
+        return nil, id .. " is not powered"
+    end
+    return sys
+end
+
+---@param raw RawState
+---@param name string
+---@return table
+local function ability(raw, name)
+    return (raw.player.abilities or {})[name] or {}
+end
+
+---@type table<string, fun(args: string[], raw: RawState): ResolvedCommand?, string?>
+local ability_handlers = {
+    cloak = function(_, raw)
+        local _, err = usable_system(raw, CLOAKING)
+        if err then
+            return nil, err
+        elseif ability(raw, "cloak").on then
+            return nil, "already cloaked"
+        end
+        return { kind = "cloak" }
+    end,
+    battery = function(_, raw)
+        local _, err = usable_system(raw, BATTERY)
+        if err then
+            return nil, err
+        elseif ability(raw, "battery").on then
+            return nil, "the battery is already on"
+        end
+        return { kind = "battery" }
+    end,
+    hack = function(args, raw)
+        local _, err = usable_system(raw, HACKING)
+        if err then
+            return nil, err
+        elseif #args == 0 then
+            if not ability(raw, "hacking").drone then
+                return nil, "no hacking drone attached yet: hack <enemy:room> first"
+            end
+            return { kind = "hack_pulse" }
+        end
+        local room, enemy = parse_id(args[1], "room")
+        if #args ~= 1 or not room or not enemy then
+            return nil, "usage: hack <enemy:room> (launch the drone) | hack (start the pulse)"
+        elseif not raw.enemy then
+            return nil, "there is no enemy ship to hack"
+        end
+        for _, s in ipairs(raw.enemy.systems or {}) do
+            if s.room == room then
+                return { kind = "hack", room = room }
+            end
+        end
+        return nil, ("enemy:room:%d has no system to hack"):format(room)
+    end,
+    mindcontrol = function(args, raw)
+        local _, err = usable_system(raw, MIND)
+        if err then
+            return nil, err
+        end
+        local uid, enemy = parse_id(args[1], "crew")
+        if #args ~= 1 or not uid or not enemy then
+            return nil, "usage: mindcontrol <enemy:crew>"
+        end
+        for _, c in ipairs((FtlBench.Visibility.enemy_view(raw) or {}).crew or {}) do
+            if c.id == "enemy:crew:" .. uid then
+                return { kind = "mindcontrol", crew = uid }
+            end
+        end
+        return nil, "no visible enemy:crew:" .. uid -- mind control needs to see its target
+    end,
+    teleport = function(args, raw)
+        local command = ({ send = 1, ["return"] = 2 })[args[1] or ""]
+        local room, enemy = parse_id(args[2], "room")
+        if #args ~= 2 or not command or not room or not enemy then
+            return nil, "usage: teleport send|return <enemy:room>"
+        end
+        local _, err = usable_system(raw, TELEPORTER)
+        if err then
+            return nil, err
+        elseif not ability(raw, "teleporter").charged then
+            return nil, "system:teleporter is still charging"
+        elseif not raw.enemy or not raw.enemy.rooms[room + 1] then
+            return nil, "no enemy:room:" .. room
+        end
+        return { kind = "teleport", room = room, command = command }
+    end,
+}
+
 ---@param args string[]
 ---@param raw RawState
 ---@return ResolvedCommand?, string?
@@ -477,7 +584,7 @@ local handlers = {
     unpause = function(_, raw)
         if raw.pause.event then
             return nil, "an event is open; answer it first"
-        elseif raw.pause.menu then
+        elseif raw.pause.menu and not raw.peek_window then
             return nil, "a game window is open (store, upgrades or menu); close it first"
         end
         return { kind = "unpause" }
@@ -491,6 +598,17 @@ local handlers = {
     jump = plan_jump,
     choose = plan_choose,
     target = plan_target,
+    show = function(args)
+        if #args ~= 1 or (args[1] ~= "map" and args[1] ~= "upgrades") then
+            return nil, "usage: show map|upgrades"
+        end
+        return { kind = "show", window = args[1] }
+    end,
+    cloak = ability_handlers.cloak,
+    battery = ability_handlers.battery,
+    hack = ability_handlers.hack,
+    mindcontrol = ability_handlers.mindcontrol,
+    teleport = ability_handlers.teleport,
     buy = plan_buy,
     upgrade = plan_upgrade,
     close = function(_, raw)
@@ -539,7 +657,12 @@ function Commands.plan(text, raw)
         return nil, "no Run in progress"
     elseif raw.pause.event and not EVENT_SAFE[name] then
         return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
-    elseif raw.pause.menu and not raw.pause.event and not WINDOW_SAFE[name] then
+    elseif
+        raw.pause.menu
+        and not raw.pause.event
+        and not raw.peek_window
+        and not WINDOW_SAFE[name]
+    then
         return nil, "a game window is open; close it first" -- hotkeys go to the window, not the ship
     end
     return handler(words, raw)
