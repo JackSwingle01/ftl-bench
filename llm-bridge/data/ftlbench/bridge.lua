@@ -4,7 +4,7 @@
 --
 -- Files live under the FTL save folder (Hyperspace's working directory):
 --   ftlbench/live/state.json    current state view, rewritten every frame
---   ftlbench/live/map.json, jumps.json   map and jump views, rewritten every frame
+--   ftlbench/live/map.json, jumps.json, store.json, upgrades.json   other views, every frame
 --   ftlbench/live/inbox.txt     Commands from the CLI: id \t wall_ms \t text
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
@@ -54,17 +54,46 @@ end
 local SENSORS = 7
 local BEAM_TYPE = 2 -- WeaponBlueprint.type
 local KEY_1 = 49 -- SDLK_1: FTL's weapon1 and first-choice hotkey
----The player's autofire hotkey from FTL's settings.ini (default v), so a custom keymap still works.
+---A hotkey from the player's FTL settings.ini, so a custom keymap still works (ADR 0005).
+---@param name string
+---@param default integer SDL key code FTL uses out of the box
 ---@return integer
-local function autofire_key()
+local function hotkey(name, default)
     local f = io.open("settings.ini", "r")
-    local key = f and f:read("a"):match("\nautofire=(%d+)")
+    local key = f and f:read("a"):match("\n" .. name .. "=(%d+)")
     if f then
         f:close()
     end
-    return tonumber(key) or 118
+    return tonumber(key) or default
 end
-local KEY_AUTOFIRE = autofire_key()
+local KEY_AUTOFIRE = hotkey("autofire", 118)
+local KEY_ESCAPE = 27 -- SDLK_ESCAPE: closes the open window (not rebindable)
+local KEY_OPEN_DOORS, KEY_CLOSE_DOORS = hotkey("open", 122), hotkey("close", 120)
+
+-- Power hotkeys by FTL system type id: the player's key to add power and (bound by
+-- scripts/install-mod) to remove it.
+local POWER_KEYS = {}
+for type, name in pairs({
+    [0] = "shields",
+    [1] = "engines",
+    [2] = "oxygen",
+    [3] = "weapons",
+    [4] = "drones",
+    [5] = "medbay",
+    [9] = "teleporter",
+    [10] = "cloaking",
+    [11] = "artillery",
+    [14] = "mind",
+    [15] = "hacking",
+}) do
+    POWER_KEYS[type] = { up = hotkey(name, 0), down = hotkey("un_" .. name, 0) }
+end
+
+---@param key integer
+local function press(key)
+    Hyperspace.App:OnKeyDown(key)
+    Hyperspace.App:OnKeyUp(key)
+end
 
 ---@param n number
 ---@return integer
@@ -370,8 +399,60 @@ local function mark_damage(crew)
     end
 end
 
+---The store at the current beacon, if any (a human can open it from the store button here).
+---@return table? store raw store view
+---@return any[] boxes StoreBox objects in item order
+---@return any? object the Store itself, for the executor
+local function read_store()
+    local loc = Hyperspace.App.world.starMap.currentLoc
+    local store = loc and loc.event and loc.event.pStore
+    if not store then
+        return nil, {}, nil
+    end
+    local items, boxes = {}, {}
+    for _, list in ipairs({ store.vStoreBoxes, store.vItemBoxes }) do
+        for i = 0, list:size() - 1 do
+            local box = list[i]
+            boxes[#boxes + 1] = box
+            items[#items + 1] = {
+                name = box.desc.title:GetText(),
+                cost = int(box.desc.cost),
+                stock = int(box.count),
+                can_hold = box:CanHold(),
+            }
+        end
+    end
+    return { open = store.bOpen, items = items }, boxes, store
+end
+
+---@param ship any ShipManager
+---@return RawUpgrades
+local function read_upgrades(ship)
+    local systems = {}
+    for i = 0, ship.vSystemList:size() - 1 do
+        local y = ship.vSystemList[i]
+        local level, max = int(y.powerState.second), int(y.maxLevel)
+        local bp = Hyperspace.Blueprints:GetSystemBlueprint(y.name)
+        local cost
+        if level < max and bp and bp.upgradeCosts:size() >= level then
+            cost = int(bp.upgradeCosts[level - 1]) -- costs[i] buys level i + 2
+        end
+        systems[#systems + 1] =
+            { type = int(y.iSystemType), level = level, max_level = max, cost = cost }
+    end
+    local reactor_cost = int(Hyperspace.App.gui.upgradeScreen.reactorButton:GetUpgradeCost())
+    local pm = Hyperspace.PowerManager.GetPowerManager(0)
+    return {
+        reactor = {
+            level = int(pm.currentPower.second),
+            cost = reactor_cost >= 0 and reactor_cost or nil,
+        },
+        systems = systems,
+    }
+end
+
 -- Game objects behind the last raw state, for the executor.
-local door_objects, crew_objects, weapon_objects, drone_objects = {}, {}, {}, {}
+local door_objects, crew_objects, weapon_objects, drone_objects, store_boxes = {}, {}, {}, {}, {}
 
 ---@return RawState
 local function read_raw()
@@ -429,6 +510,8 @@ local function read_raw()
         raw.autofire = gui.combatControl.weapControl.autoFiring
         raw.map = read_map(app.world.starMap, raw.sector)
         raw.event = read_event(gui)
+        raw.store, store_boxes = read_store()
+        raw.upgrades = read_upgrades(ship)
     end
     return raw
 end
@@ -449,28 +532,40 @@ local function execute(cmd)
         elseif not crew:MoveToRoom(cmd.room, -1, false) then
             return ("crew:%d (%s) cannot reach %s"):format(cmd.crew, crew:GetName(), room)
         end
+    elseif cmd.kind == "door" and cmd.all then
+        -- The game's open/close-all doors hotkeys. Opening takes two presses: the first opens the
+        -- interior doors, the second the airlocks too.
+        if not cmd.open then
+            press(KEY_CLOSE_DOORS)
+        else
+            for _ = 1, 2 do
+                local shut = false
+                for _, d in ipairs(door_objects) do
+                    shut = shut or not d.bOpen
+                end
+                if shut then
+                    press(KEY_OPEN_DOORS)
+                end
+            end
+        end
     elseif cmd.kind == "door" then
         for _, id in ipairs(cmd.doors) do
             door_objects[id + 1].bOpen = cmd.open
         end
     elseif cmd.kind == "power" then
-        local ship = Hyperspace.ships.player
-        local sys = ship:GetSystem(cmd.system)
-        local per_click = cmd.system == 0 and 2 or 1 -- the game moves shields a layer per click
-        local target = int(sys.powerState.first) + cmd.delta
-        for _ = 1, math.floor(math.abs(cmd.delta) / per_click) do
-            local ok
-            if cmd.delta > 0 then
-                ok = sys:IncreasePower(1, false)
-            else
-                ok = ship:ForceDecreaseSystemPower(cmd.system)
-            end
-            if not ok then
-                break
-            end
+        -- Press the system's power hotkey once per step, as a player does (ADR 0005); the game
+        -- moves shields a whole layer per press.
+        local sys = Hyperspace.ships.player:GetSystem(cmd.system)
+        local keys = POWER_KEYS[cmd.system] or {}
+        local key = cmd.delta > 0 and keys.up or keys.down
+        if not key or key == 0 then
+            return "no power hotkey is bound for this system; close FTL and run scripts/install-mod"
         end
-        -- The game keeps restoring each system toward the power the player last chose.
-        sys.lastUserPower = sys.powerState.first
+        local per_press = cmd.system == 0 and 2 or 1
+        local target = int(sys.powerState.first) + cmd.delta
+        for _ = 1, math.floor(math.abs(cmd.delta) / per_press) do
+            press(key)
+        end
         if int(sys.powerState.first) ~= target then
             return ("the game stopped the change at %d power"):format(int(sys.powerState.first))
         end
@@ -509,11 +604,35 @@ local function execute(cmd)
         w.targets:clear()
         w.lastTargets:clear() -- autofire re-aims from these
         w.targetId, w.fireWhenReady = -1, false
+    elseif cmd.kind == "buy" then
+        local ship, box = Hyperspace.ships.player, store_boxes[cmd.item + 1]
+        local before, cost = int(ship.currentScrap), int(box.desc.cost)
+        box:Purchase()
+        if int(ship.currentScrap) == before then -- Purchase only hands over the item
+            ship:ModifyScrapCount(-cost, false)
+        end
+    elseif cmd.kind == "upgrade" then
+        local ship = Hyperspace.ships.player
+        local sys = ship:GetSystem(cmd.system)
+        local bp = Hyperspace.Blueprints:GetSystemBlueprint(sys.name)
+        local cost = int(bp.upgradeCosts[int(sys.powerState.second) - 1])
+        sys:UpgradeSystem(1)
+        ship:ModifyScrapCount(-cost, false)
+    elseif cmd.kind == "upgrade_reactor" then
+        -- The game's own reactor button: OnClick charges the scrap, Accept installs the bar.
+        local button = Hyperspace.App.gui.upgradeScreen.reactorButton
+        button.bHover = true
+        button:OnClick()
+        button.bHover = false
+        button:Accept()
+    elseif cmd.kind == "close" then
+        -- Escape closes the store the way a player does, clearing the game's window pause too
+        -- (Store:Close() alone left it set). Commands only allows this while a store is open.
+        press(KEY_ESCAPE)
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
         if Hyperspace.App.gui.combatControl.weapControl.autoFiring ~= cmd.on then
-            Hyperspace.App:OnKeyDown(KEY_AUTOFIRE)
-            Hyperspace.App:OnKeyUp(KEY_AUTOFIRE)
+            press(KEY_AUTOFIRE)
         end
     elseif cmd.kind == "jump" then
         -- The game travels on its next update, as when the player clicks a beacon on the map.
@@ -732,7 +851,7 @@ local function tick()
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
-    for _, view in ipairs({ "map", "jumps" }) do
+    for _, view in ipairs({ "map", "jumps", "store", "upgrades" }) do
         if out.views[view] then
             write_atomic(LIVE .. "/" .. view .. ".json", Json.encode(out.views[view]))
         else

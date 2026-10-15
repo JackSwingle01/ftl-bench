@@ -27,7 +27,10 @@ def answer_events() -> None:
     for _ in range(10):
         s = state()
         if "menu" in (s.get("paused_by") or []):
-            raise unittest.SkipTest("a game window (e.g. a store) is open; closing it is #12")
+            if ftl("close").returncode != 0:  # a store window closes; any other window can't
+                raise unittest.SkipTest("a game window other than a store is open")
+            time.sleep(0.3)
+            continue
         event = s.get("event")
         if not event:
             time.sleep(0.3)  # an event window can open a few frames after an arrival
@@ -36,7 +39,7 @@ def answer_events() -> None:
             continue
         choice = next(c["id"] for c in event["choices"] if c["available"])
         r = ftl("choose", choice)
-        assert r.returncode == 0, r.stderr
+        assert r.returncode == 0 or "no event is open" in r.stderr, r.stderr  # it may close itself
         time.sleep(0.5)
     raise AssertionError("event windows kept opening")
 
@@ -339,7 +342,7 @@ class LiveNavigationTest(unittest.TestCase):
         jumps = view("jumps")
         if not jumps["ready"]:
             self.skipTest(f"can't jump here: {jumps.get('not_ready')}")
-        target, fuel = jumps["beacons"][0], jumps["fuel"]
+        target, fuel = pick_jump(jumps), jumps["fuel"]
         r = ftl("jump", target)
         self.assertEqual(r.returncode, 0, r.stderr)
         answer_events_and_unpause(self)
@@ -379,7 +382,7 @@ class LiveEventChoiceTest(unittest.TestCase):
         jumps = view("jumps")
         if not jumps["ready"]:
             self.skipTest(f"can't jump to reach an event: {jumps.get('not_ready')}")
-        self.assertEqual(ftl("jump", jumps["beacons"][0]).returncode, 0)
+        self.assertEqual(ftl("jump", pick_jump(jumps)).returncode, 0)
         ftl("unpause")
         event = None
         for _ in range(100):
@@ -406,6 +409,46 @@ class LiveEventChoiceTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr.strip()), (1, "no event is open"))
 
 
+def pick_jump(jumps: dict[str, Any], prefer: str | None = None) -> str:
+    """A linked beacon to jump to: one with the `prefer` marker if any, else the one furthest from
+    the rebel fleet (most jumps until it arrives, then furthest right)."""
+    beacons = {b["id"]: b for b in view("map")["beacons"]}
+    options = [beacons[i] for i in jumps["beacons"]]
+    marked = [b for b in options if prefer and b.get(prefer)]
+    if marked:
+        return marked[0]["id"]
+    return max(options, key=lambda b: (b.get("jumps_until_fleet") or 99, b["x"]))["id"]
+
+
+def fight_back() -> None:
+    """Shorten fights: power every weapon, aim the first at the enemy's shields room and the rest
+    at its weapons room, and autofire. Weapons already aimed are left alone."""
+    enemy = state().get("enemy")
+    if not enemy or not enemy.get("hostile"):
+        return
+    rooms = {s["name"]: s["room"] for s in enemy["systems"]}
+    for i, w in enumerate(state()["ship"]["weapons"]):
+        if w.get("aimed"):
+            continue
+        act("weapon", w["id"], "on")
+        room = rooms.get("shields" if i == 0 else "weapons") or enemy["rooms"][0]["id"]
+        act("target", w["id"], room)
+    act("autofire", "on")
+
+
+def wait_until_jump_ready(limit: float = 90) -> dict[str, Any]:
+    """Let the game run (answering events, fighting back) until the FTL drive is ready."""
+    jumps = view("jumps")
+    deadline = time.monotonic() + limit
+    while not jumps["ready"] and time.monotonic() < deadline:
+        answer_events()
+        fight_back()
+        ftl("unpause")
+        time.sleep(1)
+        jumps = view("jumps")
+    return jumps
+
+
 def find_enemy() -> dict[str, Any] | None:
     """Jump (answering events) until an enemy ship is present; None if none turns up."""
     for _ in range(8):
@@ -413,8 +456,8 @@ def find_enemy() -> dict[str, Any] | None:
         enemy = state().get("enemy")
         if enemy:
             return enemy
-        jumps = view("jumps")
-        if not jumps["ready"] or ftl("jump", jumps["beacons"][0]).returncode != 0:
+        jumps = wait_until_jump_ready()
+        if not jumps["ready"] or ftl("jump", pick_jump(jumps)).returncode != 0:
             return None
         ftl("unpause")
         for _ in range(100):
@@ -538,6 +581,85 @@ class LiveCombatTest(unittest.TestCase):
         self.assertIsNone(state().get("autofire"))
 
 
+def give_scrap(amount: int) -> None:
+    """Dev-probe fixture: add scrap so purchases and upgrades can be tested."""
+    before = state()["ship"]["scrap"]
+    (runs_dir().parent / "dev_give").write_text(f"scrap {amount}\n")
+    for _ in range(50):
+        time.sleep(0.1)
+        if state()["ship"]["scrap"] >= before + amount:
+            return
+    raise AssertionError("the dev probe did not give scrap (is it installed? scripts/dev-run)")
+
+
+class LiveUpgradeTest(unittest.TestCase):
+    """#12: upgrades with scrap from the dev fixture."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+
+    def test_upgrade_a_system_and_the_reactor(self) -> None:
+        answer_events()
+        give_scrap(200)
+        upgrades = view("upgrades")
+        target = next(s for s in upgrades["systems"] if not s.get("maxed"))
+        scrap = state()["ship"]["scrap"]
+        r = act("upgrade", target["id"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        time.sleep(0.2)
+        after = next(s for s in view("upgrades")["systems"] if s["id"] == target["id"])
+        self.assertEqual(after["level"], target["level"] + 1)
+        self.assertEqual(state()["ship"]["scrap"], scrap - target["cost"])
+        reactor, scrap = view("upgrades")["reactor"], state()["ship"]["scrap"]
+        r = act("upgrade", "reactor")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        time.sleep(0.2)
+        self.assertEqual(view("upgrades")["reactor"]["level"], reactor["level"] + 1)
+        self.assertEqual(state()["ship"]["scrap"], scrap - reactor["cost"])
+
+
+def find_store() -> dict[str, Any] | None:
+    """Jump (answering events, waiting out fights) until the current beacon has a store,
+    heading for store markers when the map shows one next door."""
+    for _ in range(15):
+        answer_events()
+        r = ftl("store")
+        if r.returncode == 0:
+            return json.loads(r.stdout)
+        jumps = wait_until_jump_ready()
+        if not jumps["ready"]:
+            return None
+        if ftl("jump", pick_jump(jumps, prefer="store")).returncode != 0:
+            return None
+        ftl("unpause")
+        for _ in range(100):
+            time.sleep(0.1)
+            if state().get("event"):
+                break
+    return None
+
+
+class LiveStoreTest(unittest.TestCase):
+    """#12: buy something at a real store."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+        if not find_store():
+            raise unittest.SkipTest("no store found within 12 jumps")
+
+    def test_buy_the_cheapest_item(self) -> None:
+        give_scrap(100)
+        items = [i for i in view("store")["items"] if i["stock"] > 0 and i["affordable"]]
+        cheapest = min(items, key=lambda i: i["cost"])
+        scrap = state()["ship"]["scrap"]
+        r = act("buy", cheapest["id"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        time.sleep(0.3)
+        self.assertEqual(state()["ship"]["scrap"], scrap - cheapest["cost"])
+
+
 @unittest.skipUnless(
     os.environ.get("FTL_LIVE_DESTRUCTIVE"), "ends the Run; set FTL_LIVE_DESTRUCTIVE=1"
 )
@@ -585,6 +707,8 @@ def load_tests(
         LiveEventChoiceTest,
         LiveEnemyTest,
         LiveCombatTest,
+        LiveUpgradeTest,
+        LiveStoreTest,
         LiveGameOverTest,
     )
     return unittest.TestSuite(loader.loadTestsFromTestCase(case) for case in order)

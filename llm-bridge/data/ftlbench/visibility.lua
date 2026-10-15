@@ -130,6 +130,16 @@ FtlBench = FtlBench or {}
 ---@field hacking_powered boolean? our Hacking system has power (needed for evasion/oxygen readouts)
 ---@field destroyed boolean?
 
+---@class RawStoreItem
+---@field name string
+---@field cost integer
+---@field stock integer
+---@field can_hold boolean   room for it, and not already installed
+
+---@class RawUpgrades
+---@field reactor { level: integer, cost: integer? }   cost nil at the maximum
+---@field systems { type: integer, level: integer, max_level: integer, cost: integer? }[]
+
 ---@class RawState
 ---@field in_run boolean
 ---@field frame integer        bridge ticks since the Run started
@@ -145,9 +155,11 @@ FtlBench = FtlBench or {}
 ---@field event RawEvent?    the open event window, if any
 ---@field enemy RawEnemy?
 ---@field autofire boolean?
+---@field store { open: boolean, items: RawStoreItem[] }?  the store at this beacon, if any
+---@field upgrades RawUpgrades?
 
 ---@class Observation
----@field views { state: table, map: table?, jumps: table? }
+---@field views { state: table, map: table?, jumps: table?, store: table?, upgrades: table? }
 ---@field events table[]
 
 local Visibility = {}
@@ -831,6 +843,44 @@ function observe_enemy(raw, enemy)
     return view
 end
 
+---@param raw RawState
+local function observe_store(raw)
+    local scrap = (raw.player or {}).scrap or 0
+    local items = setmetatable({}, LIST)
+    for i, it in ipairs(raw.store.items) do
+        items[i] = {
+            id = "item:" .. (i - 1),
+            name = it.name,
+            cost = it.cost,
+            stock = it.stock,
+            affordable = scrap >= it.cost,
+        }
+    end
+    return { open = raw.store.open, items = items }
+end
+
+---@param raw RawState
+local function observe_upgrades(raw)
+    local scrap = (raw.player or {}).scrap or 0
+    local function priced(entry, cost)
+        if cost then
+            entry.cost, entry.affordable = cost, scrap >= cost
+        else
+            entry.maxed = true
+        end
+        return entry
+    end
+    local u = raw.upgrades --[[@as RawUpgrades]]
+    local systems = setmetatable({}, LIST)
+    for i, s in ipairs(u.systems) do
+        systems[i] = priced(
+            { id = Visibility.system_id(s.type), level = s.level, max_level = s.max_level },
+            s.cost
+        )
+    end
+    return { reactor = priced({ level = u.reactor.level }, u.reactor.cost), systems = systems }
+end
+
 local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1
 
 ---Jumps until the rebel fleet's circle reaches a point, at its current advance per jump.
@@ -974,6 +1024,8 @@ function Visibility.observe(prev, raw, hooks)
         },
         events = setmetatable(observe_events(prev, raw, hooks), LIST),
     }
+    out.views.store = raw.store and observe_store(raw)
+    out.views.upgrades = raw.upgrades and observe_upgrades(raw)
     if raw.map then
         out.views.map = observe_map(raw, raw.map)
         out.views.jumps = observe_jumps(raw, raw.map)

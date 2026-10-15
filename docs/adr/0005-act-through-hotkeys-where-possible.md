@@ -1,0 +1,3 @@
+# Act through the game's own hotkeys wherever one exists
+
+When a Command has a matching FTL hotkey (read from the player's `settings.ini`), the bridge presses that key instead of calling the game's internals. The game's own code then applies every rule and side effect a player gets; direct calls kept missing some (power changes undone unless `lastUserPower` was updated, aimed weapons that never launched). Direct calls remain only where no hotkey can do the job: actions that need a target (a hotkey there only arms the ability and the game expects a mouse click, which we never simulate), toggles where the bridge needs a definite state (pause), and keys that need modifiers the in-game input can't send (lowering system power).

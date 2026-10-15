@@ -44,7 +44,7 @@ reason and exits non-zero when it does not, so `&&` chains stop at the first fai
 - Abilities: `cloak`, `battery`, `hack <enemy:room>`, `mindcontrol <enemy:crew>`,
   `teleport send|return <room>`
 - Travel and events: `jump <beacon>`, `choose <choice>`
-- Store and ship: `buy <item>`, `sell <item>`, `upgrade <system|reactor>`
+- Store and ship: `buy <item>`, `upgrade <system|reactor>`, `close` (leave an open store window)
 
 Run each as `ftl <command>`, e.g. `ftl power shields +2 && ftl weapon weapon:1 on`.
 

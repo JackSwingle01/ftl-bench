@@ -147,7 +147,7 @@ end)
 t.test("door all affects every door", function()
     t.eq(
         C.plan("door all open", raw_with_interior()),
-        { kind = "door", doors = { 0, 1, 2 }, open = true }
+        { kind = "door", doors = { 0, 1, 2 }, open = true, all = true }
     )
 end)
 
@@ -573,4 +573,62 @@ t.test("a beam needs two different rooms", function()
         select(2, C.plan("target weapon:3 enemy:room:2 enemy:room:2", raw_in_fight())),
         "weapon:3 (Halberd Beam) needs a start and an end room that differ"
     )
+end)
+
+-- #12: buy, upgrade, close.
+local function raw_at_store()
+    local raw = raw_with_systems()
+    raw.player.scrap = 60
+    raw.store = {
+        open = true,
+        items = {
+            { name = "Burst Laser I", cost = 50, stock = 1, can_hold = true },
+            { name = "Ion Blast II", cost = 70, stock = 1, can_hold = true },
+            { name = "Defense Drone I", cost = 50, stock = 0, can_hold = true },
+            { name = "Hacking", cost = 40, stock = 1, can_hold = false },
+        },
+    }
+    raw.upgrades = {
+        reactor = { level = 8, cost = 30 },
+        systems = {
+            { type = 0, level = 2, max_level = 8, cost = 20 },
+            { type = 3, level = 3, max_level = 3 },
+        },
+    }
+    return raw
+end
+
+t.test("buy resolves an affordable item in stock", function()
+    t.eq(C.plan("buy item:0", raw_at_store()), { kind = "buy", item = 0 })
+end)
+
+t.test("buy explains why it can't", function()
+    local raw = raw_at_store()
+    t.eq(select(2, C.plan("buy item:1", raw)), "item:1 (Ion Blast II) costs 70 scrap; you have 60")
+    t.eq(select(2, C.plan("buy item:2", raw)), "item:2 (Defense Drone I) is sold out")
+    t.eq(
+        select(2, C.plan("buy item:3", raw)),
+        "item:3 (Hacking) can't be held: no room or already installed"
+    )
+    t.eq(select(2, C.plan("buy item:9", raw)), "no item:9")
+    t.eq(select(2, C.plan("buy item:0", raw_with_systems())), "there is no store here")
+end)
+
+t.test("upgrade a system or the reactor", function()
+    local raw = raw_at_store()
+    t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0 })
+    t.eq(C.plan("upgrade reactor", raw), { kind = "upgrade_reactor" })
+    t.eq(select(2, C.plan("upgrade weapons", raw)), "system:weapons is at its maximum level")
+    raw.player.scrap = 10
+    t.eq(
+        select(2, C.plan("upgrade reactor", raw)),
+        "the reactor upgrade costs 30 scrap; you have 10"
+    )
+end)
+
+t.test("close shuts an open store window", function()
+    t.eq(C.plan("close", raw_at_store()), { kind = "close" })
+    local raw = raw_at_store()
+    raw.store.open = false
+    t.eq(select(2, C.plan("close", raw)), "no store window is open")
 end)

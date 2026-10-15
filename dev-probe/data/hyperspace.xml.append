@@ -2,4 +2,5 @@
     <mod-append:script>data/ftlbench_probe.lua</mod-append:script>
     <mod-append:script>data/ftlbench_autostart.lua</mod-append:script>
     <mod-append:script>data/ftlbench_weapons.lua</mod-append:script>
+    <mod-append:script>data/ftlbench_give.lua</mod-append:script>
 </mod:findLike>

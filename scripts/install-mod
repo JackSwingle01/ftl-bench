@@ -9,4 +9,22 @@ LUAC="$ROOT/.tools/bin/luac"
 find "$ROOT/llm-bridge" "$ROOT/dev-probe" -name '*.lua' -print0 | xargs -0 "$LUAC" -p
 MODS=("$GAME/ftlman/mods/Hyperspace.ftl" "$ROOT/llm-bridge")
 [[ "${1:-}" == "--dev" ]] && MODS+=("$ROOT/dev-probe")
+# Bind FTL's depower hotkeys (unbound by default) so `power -N` can press them (ADR 0005).
+# Only fills keys that are still 0, and only while FTL is closed: it rewrites settings.ini on exit.
+SETTINGS="$HOME/Library/Application Support/FasterThanLight/settings.ini"
+if [[ -f "$SETTINGS" ]] && ! pgrep -f "$GAME/FTL.app" >/dev/null; then
+    python3 - "$SETTINGS" <<'PY'
+import re, sys
+path = sys.argv[1]
+keys = {  # SDL key codes: F1-F10, F13, F14
+    "un_shields": 282, "un_engines": 283, "un_oxygen": 284, "un_medbay": 285, "un_teleporter": 286,
+    "un_cloaking": 287, "un_mind": 288, "un_hacking": 289, "un_artillery": 290, "un_weapons": 291,
+    "un_drones": 294, "un_temporal": 295,
+}
+text = open(path).read()
+for name, code in keys.items():
+    text = re.sub(rf"(?m)^{name}=0$", f"{name}={code}", text)
+open(path, "w").write(text)
+PY
+fi
 "$GAME/ftlman/ftlman" patch -d "$GAME/FTL.app/Contents/Resources" "${MODS[@]}"

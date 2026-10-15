@@ -4,13 +4,14 @@
 FtlBench = FtlBench or {}
 
 ---@class ResolvedCommand
----@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"|"choose"|"target"|"untarget"|"autofire"
+---@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"|"choose"|"target"|"untarget"|"autofire"|"buy"|"upgrade"|"upgrade_reactor"|"close"
 ---@field seconds number?   wait
 ---@field crew integer?     move: crew uid
 ---@field room integer?     move: room id
 ---@field enemy boolean?    move: room is on the enemy ship
 ---@field doors integer[]?  door: door ids
 ---@field open boolean?     door
+---@field all boolean?      door: every door (the game's open/close-all hotkeys)
 ---@field system integer?   power: FTL system type id
 ---@field delta integer?    power: change in power
 ---@field slot integer?     weapon, drone: slot index
@@ -19,6 +20,7 @@ FtlBench = FtlBench or {}
 ---@field sector integer?   jump_sector: index of the chosen sector
 ---@field choice integer?   choose: 0-based choice index
 ---@field rooms integer[]?  target: enemy room ids (two for a beam)
+---@field item integer?     buy: store item index
 
 local Commands = {}
 
@@ -307,6 +309,67 @@ end
 ---@param args string[]
 ---@param raw RawState
 ---@return ResolvedCommand?, string?
+local function plan_buy(args, raw)
+    local n, enemy = parse_id(args[1], "item")
+    if #args ~= 1 or not n or enemy then
+        return nil, "usage: buy <item>"
+    elseif not raw.store then
+        return nil, "there is no store here"
+    end
+    local it = raw.store.items[n + 1]
+    if not it then
+        return nil, "no item:" .. n
+    end
+    local label = ("item:%d (%s)"):format(n, it.name)
+    local scrap = raw.player.scrap
+    if it.stock <= 0 then
+        return nil, label .. " is sold out"
+    elseif scrap < it.cost then
+        return nil, ("%s costs %d scrap; you have %d"):format(label, it.cost, scrap)
+    elseif not it.can_hold then
+        return nil, label .. " can't be held: no room or already installed"
+    end
+    return { kind = "buy", item = n }
+end
+
+---@param args string[]
+---@param raw RawState
+---@return ResolvedCommand?, string?
+local function plan_upgrade(args, raw)
+    if #args ~= 1 or not raw.upgrades then
+        return nil, "usage: upgrade <system|reactor>"
+    end
+    local scrap = raw.player.scrap
+    if args[1] == "reactor" then
+        local cost = raw.upgrades.reactor.cost
+        if not cost then
+            return nil, "the reactor is at its maximum"
+        elseif scrap < cost then
+            return nil, ("the reactor upgrade costs %d scrap; you have %d"):format(cost, scrap)
+        end
+        return { kind = "upgrade_reactor" }
+    end
+    local type = system_type(args[1])
+    if not type then
+        return nil, "unknown system: " .. args[1]
+    end
+    local id = FtlBench.Visibility.system_id(type)
+    for _, s in ipairs(raw.upgrades.systems) do
+        if s.type == type then
+            if not s.cost then
+                return nil, id .. " is at its maximum level"
+            elseif scrap < s.cost then
+                return nil, ("%s upgrade costs %d scrap; you have %d"):format(id, s.cost, scrap)
+            end
+            return { kind = "upgrade", system = type }
+        end
+    end
+    return nil, ("no %s on this ship"):format(id)
+end
+
+---@param args string[]
+---@param raw RawState
+---@return ResolvedCommand?, string?
 local function plan_choose(args, raw)
     local n, enemy = parse_id(args[1], "choice")
     if #args ~= 1 or not n or enemy then
@@ -398,7 +461,7 @@ local function plan_door(args, raw)
         end
         ids[1] = id
     end
-    return { kind = "door", doors = ids, open = state == "open" }
+    return { kind = "door", doors = ids, open = state == "open", all = args[1] == "all" or nil }
 end
 
 ---@type table<string, fun(args: string[], raw: RawState): ResolvedCommand?, string?>
@@ -423,6 +486,14 @@ local handlers = {
     jump = plan_jump,
     choose = plan_choose,
     target = plan_target,
+    buy = plan_buy,
+    upgrade = plan_upgrade,
+    close = function(_, raw)
+        if not (raw.store and raw.store.open) then
+            return nil, "no store window is open"
+        end
+        return { kind = "close" }
+    end,
     untarget = function(args, raw)
         local w, slot, err = find_weapon(raw, args[1])
         if #args ~= 1 or not w then

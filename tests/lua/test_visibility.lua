@@ -1088,3 +1088,52 @@ t.test("a hit outside any room names no room", function()
         { type = "hit", target = "enemy", damage = 1 },
     })
 end)
+
+-- #12: store and upgrades.
+---@return RawState
+local function raw_at_store()
+    local raw = raw_with_systems()
+    raw.player.scrap = 60
+    raw.store = {
+        open = false,
+        items = {
+            { name = "Burst Laser I", cost = 50, stock = 1, can_hold = true },
+            { name = "Hull Repair", cost = 2, stock = 10, can_hold = true },
+            { name = "Ion Blast II", cost = 70, stock = 1, can_hold = true },
+            { name = "Defense Drone I", cost = 50, stock = 0, can_hold = true },
+        },
+    }
+    raw.upgrades = {
+        reactor = { level = 8, cost = 30 },
+        systems = {
+            { type = 0, level = 2, max_level = 8, cost = 20 },
+            { type = 3, level = 3, max_level = 8 },
+        },
+    }
+    return raw
+end
+
+t.test("the store lists items with price, stock and whether we can buy them", function()
+    local store = V.observe(nil, raw_at_store(), {}).views.store --[[@as table]]
+    t.eq(
+        store.items[1],
+        { id = "item:0", name = "Burst Laser I", cost = 50, stock = 1, affordable = true }
+    )
+    t.eq(store.items[3].affordable, false) -- 70 > 60 scrap
+    t.eq(store.items[4].stock, 0)
+    t.eq(store.open, false)
+end)
+
+t.test("no store here, no store view", function()
+    t.eq(V.observe(nil, raw_with_systems(), {}).views.store, nil)
+end)
+
+t.test("upgrades list the reactor and each system's next cost", function()
+    local u = V.observe(nil, raw_at_store(), {}).views.upgrades --[[@as table]]
+    t.eq(u.reactor, { level = 8, cost = 30, affordable = true })
+    t.eq(
+        u.systems[1],
+        { id = "system:shields", level = 2, max_level = 8, cost = 20, affordable = true }
+    )
+    t.eq(u.systems[2], { id = "system:weapons", level = 3, max_level = 8, maxed = true })
+end)
