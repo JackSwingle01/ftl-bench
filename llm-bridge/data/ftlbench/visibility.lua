@@ -158,7 +158,6 @@ FtlBench = FtlBench or {}
 ---@field autofire boolean?
 ---@field store { open: boolean, items: RawStoreItem[] }?  the store at this beacon, if any
 ---@field upgrades RawUpgrades?
----@field peek_window boolean?  a window opened by `ftl map`/`ftl upgrades`; closed before the next action
 
 ---@class Observation
 ---@field views { state: table, map: table?, jumps: table?, store: table?, upgrades: table? }
@@ -210,9 +209,8 @@ end
 ---@return string[]?
 local function paused_by(raw)
     local p, out = raw.pause, nil
-    -- The game also sets its menu pause for an event window, so "menu" means any other window;
-    -- a peek window closes itself before the next action, so it blocks nothing.
-    local menu = p.menu and not p.event and not raw.peek_window
+    -- The game also sets its menu pause for an event window, so "menu" means any other window.
+    local menu = p.menu and not p.event
     for _, reason in ipairs({ { p.manual, "player" }, { p.event, "event" }, { menu, "menu" } }) do
         if reason[1] then
             out = out or setmetatable({}, LIST)

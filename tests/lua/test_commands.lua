@@ -670,10 +670,11 @@ local function raw_with_abilities()
     raw.player.abilities = {
         cloak = { on = false },
         battery = { on = false },
-        hacking = { drone = false, pulsing = false },
+        hacking = { drone = false, launched = false },
         teleporter = { charged = true },
     }
     raw.player.sensors_power, raw.player.sensors_manned = 2, false
+    raw.player.drone_parts = 2
     raw.enemy = {
         class = "Rebel Fighter",
         hostile = true,
@@ -747,6 +748,14 @@ t.test("hack launches the drone at an enemy system, then starts the pulse", func
     t.eq(C.plan("hack", raw), { kind = "hack_pulse" })
 end)
 
+t.test("hack can't launch a second drone, or one without drone parts", function()
+    local raw = raw_with_abilities()
+    raw.player.abilities.hacking.launched = true
+    t.eq(select(2, C.plan("hack enemy:room:0", raw)), "a hacking drone is already out")
+    raw.player.abilities.hacking.launched, raw.player.drone_parts = false, 0
+    t.eq(select(2, C.plan("hack enemy:room:0", raw)), "no drone parts to build a hacking drone")
+end)
+
 t.test("mind control needs an enemy crew member we can see", function()
     local raw = raw_with_abilities()
     t.eq(C.plan("mindcontrol enemy:crew:201", raw), { kind = "mindcontrol", crew = 201 })
@@ -757,6 +766,8 @@ end)
 
 t.test("teleport sends crew to, or brings them back from, an enemy room", function()
     local raw = raw_with_abilities()
+    raw.player.crew[1].room = 1 -- on the teleporter pad
+    raw.player.crew[2].room, raw.player.crew[2].on_enemy_ship = 1, true
     t.eq(C.plan("teleport send enemy:room:1", raw), { kind = "teleport", room = 1, command = 1 })
     t.eq(C.plan("teleport return enemy:room:1", raw), { kind = "teleport", room = 1, command = 2 })
     raw.player.abilities.teleporter.charged = false
@@ -767,21 +778,24 @@ t.test("teleport sends crew to, or brings them back from, an enemy room", functi
     t.eq(select(2, C.plan("teleport away", raw)), "usage: teleport send|return <enemy:room>")
 end)
 
+t.test("teleport needs crew to send, or crew to bring back", function()
+    local raw = raw_with_abilities()
+    for _, c in ipairs(raw.player.crew) do
+        c.room = 0
+    end
+    t.eq(
+        select(2, C.plan("teleport send enemy:room:1", raw)),
+        "no crew on the teleporter pad (room:1)"
+    )
+    t.eq(
+        select(2, C.plan("teleport return enemy:room:1", raw)),
+        "none of our crew are in enemy:room:1"
+    )
+end)
+
 t.test("show opens the map or upgrades window, even with an event or window up", function()
     local raw = raw_with_systems()
     t.eq(C.plan("show map", raw), { kind = "show", window = "map" })
     t.eq(C.plan("show upgrades", raw), { kind = "show", window = "upgrades" })
     t.eq(select(2, C.plan("show crew", raw)), "usage: show map|upgrades")
-end)
-
-t.test("a peek window opened by show doesn't block the next action", function()
-    local raw = raw_with_systems()
-    raw.pause.menu, raw.peek_window = true, true
-    t.eq(C.plan("power shields -2", raw), { kind = "power", system = 0, delta = -2 })
-end)
-
-t.test("a peek window doesn't block unpause", function()
-    local raw = raw_with_systems()
-    raw.pause.menu, raw.peek_window = true, true
-    t.eq(C.plan("unpause", raw), { kind = "unpause" })
 end)

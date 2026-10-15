@@ -49,7 +49,7 @@ local function dump()
             local ok, v = pcall(function()
                 return w[f]
             end)
-            p(" ", f, ok and v or "n/a")
+            p(" ", f, ok and tostring(v) or "n/a")
         end
         p("  cooldown", w.cooldown.first, w.cooldown.second)
         p("  targets", w.targets:size())
@@ -108,7 +108,7 @@ local function dump()
             local ok, v = pcall(function()
                 return obj[f]
             end)
-            parts[#parts + 1] = f .. "=" .. tostring(ok and v or "n/a")
+            parts[#parts + 1] = f .. "=" .. (ok and tostring(v) or "n/a")
         end
         p(table.concat(parts, " "))
     end

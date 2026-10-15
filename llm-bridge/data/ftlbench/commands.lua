@@ -374,6 +374,10 @@ local ability_handlers = {
             return nil, "usage: hack <enemy:room> (launch the drone) | hack (start the pulse)"
         elseif not raw.enemy then
             return nil, "there is no enemy ship to hack"
+        elseif ability(raw, "hacking").launched then
+            return nil, "a hacking drone is already out"
+        elseif (raw.player.drone_parts or 0) < 1 then
+            return nil, "no drone parts to build a hacking drone"
         end
         for _, s in ipairs(raw.enemy.systems or {}) do
             if s.room == room then
@@ -404,15 +408,24 @@ local ability_handlers = {
         if #args ~= 2 or not command or not room or not enemy then
             return nil, "usage: teleport send|return <enemy:room>"
         end
-        local _, err = usable_system(raw, TELEPORTER)
-        if err then
+        local pad, err = usable_system(raw, TELEPORTER)
+        if not pad then
             return nil, err
         elseif not ability(raw, "teleporter").charged then
             return nil, "system:teleporter is still charging"
         elseif not raw.enemy or not raw.enemy.rooms[room + 1] then
             return nil, "no enemy:room:" .. room
         end
-        return { kind = "teleport", room = room, command = command }
+        -- Send takes whoever stands on the pad; return brings back our crew from that enemy room.
+        local from, aboard = command == 1 and pad.room or room, command == 2
+        for _, c in ipairs(raw.player.crew or {}) do
+            if c.room == from and c.on_enemy_ship == aboard then
+                return { kind = "teleport", room = room, command = command }
+            end
+        end
+        return nil,
+            command == 1 and ("no crew on the teleporter pad (room:%d)"):format(pad.room)
+                or ("none of our crew are in enemy:room:%d"):format(room)
     end,
 }
 
@@ -584,7 +597,7 @@ local handlers = {
     unpause = function(_, raw)
         if raw.pause.event then
             return nil, "an event is open; answer it first"
-        elseif raw.pause.menu and not raw.peek_window then
+        elseif raw.pause.menu then
             return nil, "a game window is open (store, upgrades or menu); close it first"
         end
         return { kind = "unpause" }
@@ -657,12 +670,7 @@ function Commands.plan(text, raw)
         return nil, "no Run in progress"
     elseif raw.pause.event and not EVENT_SAFE[name] then
         return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
-    elseif
-        raw.pause.menu
-        and not raw.pause.event
-        and not raw.peek_window
-        and not WINDOW_SAFE[name]
-    then
+    elseif raw.pause.menu and not raw.pause.event and not WINDOW_SAFE[name] then
         return nil, "a game window is open; close it first" -- hotkeys go to the window, not the ship
     end
     return handler(words, raw)

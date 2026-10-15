@@ -44,14 +44,20 @@ def require_game() -> None:
         fail(f"game not running (no update from the mod for {age:.0f}s)", 2)
 
 
+def post(text: str) -> str:
+    """Queue Command text for the mod without waiting; returns its id."""
+    cmd_id = f"{os.getpid()}-{time.time_ns()}"
+    with (LIVE / "inbox.txt").open("a") as f:
+        f.write(f"{cmd_id}\t{time.time_ns() // 1_000_000}\t{text}\n")
+    return cmd_id
+
+
 def send(text: str) -> tuple[str, str]:
     """Send Command text to the mod and return (status, detail).
 
     detail is the reason for an error, or seconds to wait for an ok `wait`.
     """
-    cmd_id = f"{os.getpid()}-{time.time_ns()}"
-    with (LIVE / "inbox.txt").open("a") as f:
-        f.write(f"{cmd_id}\t{time.time_ns() // 1_000_000}\t{text}\n")
+    cmd_id = post(text)
     results = LIVE / "results.txt"
     deadline = time.monotonic() + ANSWER_TIMEOUT
     prefix = cmd_id + "\t"
@@ -102,7 +108,7 @@ def main(args: list[str]) -> None:
             fail("no Run in progress", 1)
         sys.stdout.write(view.read_text())
         if args[0] in ("map", "upgrades"):
-            send(f"show {args[0]}")  # open the window too, for anyone watching
+            post(f"show {args[0]}")  # open the window too, for anyone watching; a read never waits
         return
     if args[0] == "events":
         events(args[1:])

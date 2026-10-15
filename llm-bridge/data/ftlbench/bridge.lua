@@ -478,7 +478,7 @@ local function read_abilities(ship)
     if ship.hackingSystem then
         local drone = ship.hackingSystem.drone
         a.hacking =
-            { drone = drone ~= nil and drone.arrived, pulsing = ship.hackingSystem.bHacking }
+            { drone = drone ~= nil and drone.arrived, launched = ship.hackingSystem.bHacking }
     end
     if ship.mindSystem then
         a.mind = { controlling = ship.mindSystem.controlledCrew:size() > 0 }
@@ -499,6 +499,9 @@ local function read_raw()
     local gui = app and app.gui
     local ship = Hyperspace.ships.player
     local in_run = gui ~= nil and ship ~= nil and not app.menu.bOpen
+    if peek_window and not (gui and gui.menu_pause) then
+        peek_window = false -- closed by the watcher; a window opened later must block as usual
+    end
     ---@type RawState
     local raw = {
         in_run = in_run,
@@ -507,7 +510,8 @@ local function read_raw()
         pause = {
             manual = in_run and gui.bPaused or false,
             event = in_run and gui.event_pause or false,
-            menu = in_run and gui.menu_pause or false,
+            -- A peek window (ftl map/upgrades) closes before the next action, so it blocks nothing.
+            menu = in_run and gui.menu_pause and not peek_window or false,
         },
     }
     if in_run then
@@ -548,7 +552,6 @@ local function read_raw()
         raw.enemy = enemy and read_enemy(enemy, ship) or nil
         raw.autofire = gui.combatControl.weapControl.autoFiring
         p.abilities = read_abilities(ship)
-        raw.peek_window = peek_window and raw.pause.menu or nil
         raw.map = read_map(app.world.starMap, raw.sector)
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
@@ -791,7 +794,7 @@ local function handle_inbox(raw)
                 or (cmd and cmd.seconds and ("ok\t" .. cmd.seconds))
                 or "ok"
             append(LIVE .. "/results.txt", id .. "\t" .. status .. "\n")
-            if run_dir then
+            if run_dir and not (cmd and cmd.kind == "show") then -- reading a view isn't a Command
                 append(run_dir .. "/actions.jsonl", Json.encode({
                     wall_ms = tonumber(wall_ms),
                     frame = raw.frame,
