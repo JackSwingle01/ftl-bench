@@ -684,6 +684,9 @@ local function observe_events(prev, raw, hooks)
         enemy_events(prev, raw, events)
     end
     hook_events(raw, hooks or {}, events)
+    if prev and raw.store and raw.store.open and not (prev.store and prev.store.open) then
+        events[#events + 1] = { type = "store_opened" }
+    end
     if prev and raw.game_over and not prev.game_over then
         local event = run_result(raw)
         event.type = "game_over"
@@ -776,6 +779,7 @@ function observe_enemy(raw, enemy)
         class = enemy.class,
         hostile = enemy.hostile,
         cloaked = enemy.cloaked,
+        destroyed = enemy.destroyed or nil,
         hull = enemy.hull,
         hull_max = enemy.hull_max,
         shields = { layers = enemy.shield_layers, max_layers = enemy.shield_layers_max },
@@ -854,6 +858,7 @@ local function observe_store(raw)
             cost = it.cost,
             stock = it.stock,
             affordable = scrap >= it.cost,
+            can_hold = it.can_hold,
         }
     end
     return { open = raw.store.open, items = items }
@@ -1024,7 +1029,9 @@ function Visibility.observe(prev, raw, hooks)
         },
         events = setmetatable(observe_events(prev, raw, hooks), LIST),
     }
-    out.views.store = raw.store and observe_store(raw)
+    -- A human can open the store only with no event window up and no hostile ship here.
+    local store_usable = raw.store and not raw.pause.event and not (raw.enemy and raw.enemy.hostile)
+    out.views.store = store_usable and observe_store(raw) or nil
     out.views.upgrades = raw.upgrades and observe_upgrades(raw)
     if raw.map then
         out.views.map = observe_map(raw, raw.map)

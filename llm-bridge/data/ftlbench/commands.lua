@@ -21,11 +21,14 @@ FtlBench = FtlBench or {}
 ---@field choice integer?   choose: 0-based choice index
 ---@field rooms integer[]?  target: enemy room ids (two for a beam)
 ---@field item integer?     buy: store item index
+---@field cost integer?     upgrade: scrap it was checked against
 
 local Commands = {}
 
 -- Commands that still work while an event window is open.
 local EVENT_SAFE = { choose = true, wait = true, pause = true, unpause = true }
+-- Commands that still work while another game window (store, upgrades, menu) is open.
+local WINDOW_SAFE = { close = true, buy = true, wait = true, pause = true, unpause = true }
 
 local WAIT_ERROR = "wait takes 0.1 to 10 seconds in steps of 0.1"
 
@@ -336,8 +339,10 @@ end
 ---@param raw RawState
 ---@return ResolvedCommand?, string?
 local function plan_upgrade(args, raw)
-    if #args ~= 1 or not raw.upgrades then
+    if #args ~= 1 then
         return nil, "usage: upgrade <system|reactor>"
+    elseif not raw.upgrades then
+        return nil, "upgrades are not available right now"
     end
     local scrap = raw.player.scrap
     if args[1] == "reactor" then
@@ -361,7 +366,7 @@ local function plan_upgrade(args, raw)
             elseif scrap < s.cost then
                 return nil, ("%s upgrade costs %d scrap; you have %d"):format(id, s.cost, scrap)
             end
-            return { kind = "upgrade", system = type }
+            return { kind = "upgrade", system = type, cost = s.cost }
         end
     end
     return nil, ("no %s on this ship"):format(id)
@@ -534,6 +539,8 @@ function Commands.plan(text, raw)
         return nil, "no Run in progress"
     elseif raw.pause.event and not EVENT_SAFE[name] then
         return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
+    elseif raw.pause.menu and not raw.pause.event and not WINDOW_SAFE[name] then
+        return nil, "a game window is open; close it first" -- hotkeys go to the window, not the ship
     end
     return handler(words, raw)
 end

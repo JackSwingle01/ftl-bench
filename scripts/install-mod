@@ -9,21 +9,30 @@ LUAC="$ROOT/.tools/bin/luac"
 find "$ROOT/llm-bridge" "$ROOT/dev-probe" -name '*.lua' -print0 | xargs -0 "$LUAC" -p
 MODS=("$GAME/ftlman/mods/Hyperspace.ftl" "$ROOT/llm-bridge")
 [[ "${1:-}" == "--dev" ]] && MODS+=("$ROOT/dev-probe")
-# Bind FTL's depower hotkeys (unbound by default) so `power -N` can press them (ADR 0005).
-# Only fills keys that are still 0, and only while FTL is closed: it rewrites settings.ini on exit.
+# Bind FTL's depower and store hotkeys (unbound by default) so `power -N` and `buy` can press them
+# (ADR 0005).
+# settings.ini is shared with the Steam install, so: only while no FTL is running (it rewrites
+# the file on exit), back it up once, and only use keypad codes no other binding uses.
 SETTINGS="$HOME/Library/Application Support/FasterThanLight/settings.ini"
-if [[ -f "$SETTINGS" ]] && ! pgrep -f "$GAME/FTL.app" >/dev/null; then
+if [[ -f "$SETTINGS" ]] && ! pgrep -x FTL >/dev/null; then
+    [[ -f "$SETTINGS.ftlbench-bak" ]] || cp "$SETTINGS" "$SETTINGS.ftlbench-bak"
     python3 - "$SETTINGS" <<'PY'
 import re, sys
 path = sys.argv[1]
-keys = {  # SDL key codes: F1-F10, F13, F14
-    "un_shields": 282, "un_engines": 283, "un_oxygen": 284, "un_medbay": 285, "un_teleporter": 286,
-    "un_cloaking": 287, "un_mind": 288, "un_hacking": 289, "un_artillery": 290, "un_weapons": 291,
-    "un_drones": 294, "un_temporal": 295,
-}
+names = ["un_shields", "un_engines", "un_oxygen", "un_medbay", "un_teleporter", "un_cloaking",
+         "un_mind", "un_hacking", "un_artillery", "un_weapons", "un_drones", "un_temporal", "store"]
+ours_before = set(range(282, 296))  # F-key codes an earlier version of this script assigned
 text = open(path).read()
-for name, code in keys.items():
-    text = re.sub(rf"(?m)^{name}=0$", f"{name}={code}", text)
+values = dict(re.findall(r"(?m)^(\w+)=(\d+)$", text))
+def needs_key(name):  # unbound, or our old clashing assignment
+    current = int(values.get(name, "0"))
+    return current == 0 or current in ours_before
+# Every code that stays bound counts as taken, including ones this script set earlier.
+taken = {int(v) for k, v in values.items() if v != "0" and not (k in names and needs_key(k))}
+free = [c for c in range(256, 273) if c not in taken]  # SDL keypad 0-9 . / * - + enter =
+for name in names:
+    if needs_key(name):
+        text = re.sub(rf"(?m)^{name}=\d+$", f"{name}={free.pop(0)}", text)
 open(path, "w").write(text)
 PY
 fi

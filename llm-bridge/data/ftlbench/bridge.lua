@@ -69,6 +69,7 @@ end
 local KEY_AUTOFIRE = hotkey("autofire", 118)
 local KEY_ESCAPE = 27 -- SDLK_ESCAPE: closes the open window (not rebindable)
 local KEY_OPEN_DOORS, KEY_CLOSE_DOORS = hotkey("open", 122), hotkey("close", 120)
+local KEY_STORE = hotkey("store", 0) -- unbound by default; scripts/install-mod binds it
 
 -- Power hotkeys by FTL system type id: the player's key to add power and (bound by
 -- scripts/install-mod) to remove it.
@@ -605,6 +606,12 @@ local function execute(cmd)
         w.lastTargets:clear() -- autofire re-aims from these
         w.targetId, w.fireWhenReady = -1, false
     elseif cmd.kind == "buy" then
+        -- Shop with the store window open, as a player does (opened with the store hotkey).
+        local loc = Hyperspace.App.world.starMap.currentLoc
+        local store = loc and loc.event and loc.event.pStore
+        if store and not store.bOpen and KEY_STORE ~= 0 then
+            press(KEY_STORE)
+        end
         local ship, box = Hyperspace.ships.player, store_boxes[cmd.item + 1]
         local before, cost = int(ship.currentScrap), int(box.desc.cost)
         box:Purchase()
@@ -613,11 +620,8 @@ local function execute(cmd)
         end
     elseif cmd.kind == "upgrade" then
         local ship = Hyperspace.ships.player
-        local sys = ship:GetSystem(cmd.system)
-        local bp = Hyperspace.Blueprints:GetSystemBlueprint(sys.name)
-        local cost = int(bp.upgradeCosts[int(sys.powerState.second) - 1])
-        sys:UpgradeSystem(1)
-        ship:ModifyScrapCount(-cost, false)
+        ship:GetSystem(cmd.system):UpgradeSystem(1)
+        ship:ModifyScrapCount(-cmd.cost, false)
     elseif cmd.kind == "upgrade_reactor" then
         -- The game's own reactor button: OnClick charges the scrap, Accept installs the bar.
         local button = Hyperspace.App.gui.upgradeScreen.reactorButton

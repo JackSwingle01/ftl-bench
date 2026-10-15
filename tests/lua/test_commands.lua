@@ -616,7 +616,7 @@ end)
 
 t.test("upgrade a system or the reactor", function()
     local raw = raw_at_store()
-    t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0 })
+    t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0, cost = 20 })
     t.eq(C.plan("upgrade reactor", raw), { kind = "upgrade_reactor" })
     t.eq(select(2, C.plan("upgrade weapons", raw)), "system:weapons is at its maximum level")
     raw.player.scrap = 10
@@ -631,4 +631,17 @@ t.test("close shuts an open store window", function()
     local raw = raw_at_store()
     raw.store.open = false
     t.eq(select(2, C.plan("close", raw)), "no store window is open")
+end)
+
+t.test("an open game window blocks actions except close, wait and pause", function()
+    local raw = raw_at_store()
+    raw.pause.menu = true
+    t.eq(select(2, C.plan("power shields -2", raw)), "a game window is open; close it first")
+    t.eq(C.plan("close", raw), { kind = "close" })
+    t.eq(C.plan("buy item:0", raw), { kind = "buy", item = 0 })
+    t.eq(C.plan("wait 1", raw), { kind = "wait", seconds = 1 })
+end)
+
+t.test("upgrade carries the cost it was checked against", function()
+    t.eq(C.plan("upgrade shields", raw_at_store()), { kind = "upgrade", system = 0, cost = 20 })
 end)

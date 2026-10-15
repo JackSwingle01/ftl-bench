@@ -282,7 +282,9 @@ class LiveEventsTest(unittest.TestCase):
         airlocks = [d for d in ship["doors"] if "space" in d["rooms"]]
         room = airlocks[0]["rooms"][0]
         vents = [d["id"] for d in airlocks if d["rooms"][0] == room]
-        crew = ship["crew"][0]
+        # Send whoever is next door to the airlock room (the Kestrel's engineer), not the pilot.
+        neighbours = {r for d in ship["doors"] if room in d["rooms"] for r in d["rooms"]}
+        crew = next((c for c in ship["crew"] if c["room"] in neighbours), ship["crew"][0])
         home = crew["room"]
         self.assertEqual(act("move", crew["id"], room).returncode, 0)
         answer_events_and_unpause(self)
@@ -451,15 +453,19 @@ def wait_until_jump_ready(limit: float = 90) -> dict[str, Any]:
 
 def find_enemy() -> dict[str, Any] | None:
     """An enemy ship to test against: spawn a pirate fight here with the dev fixture."""
+
+    def fighting(e: dict[str, Any] | None) -> bool:
+        return bool(e and e.get("hostile") and not e.get("destroyed"))
+
     answer_events()
     enemy = state().get("enemy")
-    if enemy and not enemy.get("destroyed"):
+    if fighting(enemy):
         return enemy
     spawn_event("PIRATE")
     for _ in range(20):
         answer_events()
         enemy = state().get("enemy")
-        if enemy:
+        if fighting(enemy):
             return enemy
         time.sleep(0.25)
     return None
@@ -538,10 +544,9 @@ class LiveCombatTest(unittest.TestCase):
         ftl("pause")
 
     def test_target_fires_and_lands_or_is_stopped(self) -> None:
-        answer_events()
-        enemy = state().get("enemy")
+        enemy = find_enemy()  # the previous test's fight may have ended (e.g. a surrender)
         if not enemy:
-            self.skipTest("the enemy is gone")
+            self.skipTest("no hostile enemy")
         slot, name, why = None, "", ""
         for w in state()["ship"]["weapons"]:
             r = act("weapon", w["id"], "on")
@@ -588,6 +593,20 @@ def give_scrap(amount: int) -> None:
         if state()["ship"]["scrap"] >= before + amount:
             return
     raise AssertionError("the dev probe did not give scrap (is it installed? scripts/dev-run)")
+
+
+def leave_any_fight() -> None:
+    """Jump away from a hostile ship (a store can't be used while one is here)."""
+    for _ in range(3):
+        enemy = state().get("enemy")
+        if not enemy or not enemy.get("hostile"):
+            return
+        jumps = wait_until_jump_ready()
+        if jumps["ready"]:
+            act("jump", pick_jump(jumps))
+            ftl("unpause")
+            time.sleep(3)
+            answer_events()
 
 
 def spawn_event(name: str) -> None:
@@ -651,6 +670,7 @@ class LiveStoreTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         LiveGameTest.setUpClass()
+        leave_any_fight()
         spawn_event("STORE")
         answer_events()  # the store event's window, then the store window closes
         if ftl("store").returncode != 0:
@@ -661,10 +681,13 @@ class LiveStoreTest(unittest.TestCase):
         items = [i for i in view("store")["items"] if i["stock"] > 0 and i["affordable"]]
         cheapest = min(items, key=lambda i: i["cost"])
         scrap = state()["ship"]["scrap"]
-        r = act("buy", cheapest["id"])
+        r = act("buy", cheapest["id"])  # opens the store window first
         self.assertEqual(r.returncode, 0, r.stderr)
         time.sleep(0.3)
         self.assertEqual(state()["ship"]["scrap"], scrap - cheapest["cost"])
+        self.assertTrue(view("store")["open"], "buy should show the store window")
+        time.sleep(2)  # leave it on screen a moment for anyone watching
+        self.assertEqual(act("close").returncode, 0)
 
 
 @unittest.skipUnless(

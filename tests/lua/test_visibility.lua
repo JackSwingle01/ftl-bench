@@ -1115,10 +1115,14 @@ end
 
 t.test("the store lists items with price, stock and whether we can buy them", function()
     local store = V.observe(nil, raw_at_store(), {}).views.store --[[@as table]]
-    t.eq(
-        store.items[1],
-        { id = "item:0", name = "Burst Laser I", cost = 50, stock = 1, affordable = true }
-    )
+    t.eq(store.items[1], {
+        id = "item:0",
+        name = "Burst Laser I",
+        cost = 50,
+        stock = 1,
+        affordable = true,
+        can_hold = true,
+    })
     t.eq(store.items[3].affordable, false) -- 70 > 60 scrap
     t.eq(store.items[4].stock, 0)
     t.eq(store.open, false)
@@ -1136,4 +1140,27 @@ t.test("upgrades list the reactor and each system's next cost", function()
         { id = "system:shields", level = 2, max_level = 8, cost = 20, affordable = true }
     )
     t.eq(u.systems[2], { id = "system:weapons", level = 3, max_level = 8, maxed = true })
+end)
+
+t.test("the store shows only when a human could open it", function()
+    local raw = raw_at_store()
+    raw.pause.event = true
+    t.eq(V.observe(nil, raw, {}).views.store, nil)
+    raw = raw_at_store()
+    raw.enemy = raw_with_enemy().enemy -- hostile
+    t.eq(V.observe(nil, raw, {}).views.store, nil)
+end)
+
+t.test("store items say whether they can be held, and opening the store is an event", function()
+    local closed, open = raw_at_store(), raw_at_store()
+    open.store.open = true
+    t.eq((V.observe(nil, open, {}).views.store --[[@as table]]).items[1].can_hold, true)
+    t.eq(events(closed, open), { { type = "store_opened" } })
+end)
+
+t.test("a destroyed enemy ship shows as destroyed", function()
+    local raw = raw_with_enemy()
+    raw.enemy.destroyed = true
+    t.eq(enemy_view(raw).destroyed, true)
+    t.eq(enemy_view(raw_with_enemy()).destroyed, nil)
 end)
