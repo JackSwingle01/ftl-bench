@@ -1,5 +1,7 @@
 -- DEVELOPMENT ONLY: dumps raw game facts to ftlbench/probe.txt every 2s during a Run.
 -- Writes hidden information, so it must never be installed for a scored Run.
+FtlBench = FtlBench or {}
+FtlBench.dev_probe = true
 local n = 0
 local function dump()
     local s = Hyperspace.ships.player

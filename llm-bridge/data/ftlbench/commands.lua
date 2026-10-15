@@ -82,6 +82,9 @@ local function plan_move(args, raw)
         return nil, "no crew:" .. uid
     end
     local label = ("crew:%d (%s)"):format(uid, crew.name)
+    if crew.dead then
+        return nil, label .. " is dead"
+    end
     if crew.on_enemy_ship and not enemy then
         return nil, label .. " is on the enemy ship; use an enemy:room:N"
     elseif enemy and not crew.on_enemy_ship then

@@ -34,6 +34,7 @@ FtlBench = FtlBench or {}
 ---@field health_max number
 ---@field room integer
 ---@field on_enemy_ship boolean
+---@field dead boolean?
 ---@field skills integer[] piloting, engines, shields, weapons, repair, combat
 
 ---@class RawShip
@@ -98,7 +99,19 @@ local function round(n)
     return math.floor(n + 0.5)
 end
 
+---True when two rooms share a stretch of wall (touching corners don't count).
+---@param a RawRoom
+---@param b RawRoom
+---@return boolean
+local function share_wall(a, b)
+    local across = math.min(a.x + a.w, b.x + b.w) - math.max(a.x, b.x)
+    local along = math.min(a.y + a.h, b.y + b.h) - math.max(a.y, b.y)
+    return (across > 0 and (a.y + a.h == b.y or b.y + b.h == a.y))
+        or (along > 0 and (a.x + a.w == b.x or b.x + b.w == a.x))
+end
+
 ---Rooms a human can see into on their own ship.
+---Slugs see into every room sharing a wall with theirs (visible-state.md section 1.2).
 ---@param raw RawState
 ---@param ship RawShip
 ---@return table<integer, boolean>? lit nil when every room is visible
@@ -107,15 +120,18 @@ local function lit_rooms(raw, ship)
         return nil
     end
     local lit = {}
+    local by_id = {}
+    for _, r in ipairs(ship.rooms or {}) do
+        by_id[r.id] = r
+    end
     for _, c in ipairs(ship.crew or {}) do
-        if not c.on_enemy_ship then
+        if not c.on_enemy_ship and not c.dead then
             lit[c.room] = true
-            if c.species == "slug" then
-                for _, d in ipairs(ship.doors or {}) do
-                    if d.room1 == c.room and d.room2 >= 0 then
-                        lit[d.room2] = true
-                    elseif d.room2 == c.room then
-                        lit[d.room1] = true
+            local home = by_id[c.room]
+            if c.species == "slug" and home then
+                for _, r in ipairs(ship.rooms) do
+                    if share_wall(home, r) then
+                        lit[r.id] = true
                     end
                 end
             end
@@ -187,8 +203,10 @@ local function observe_ship(raw, ship)
     for i, d in ipairs(ship.doors or {}) do
         view.doors[i] = observe_door(d)
     end
-    for i, c in ipairs(ship.crew or {}) do
-        view.crew[i] = observe_crew(c)
+    for _, c in ipairs(ship.crew or {}) do
+        if not c.dead then
+            view.crew[#view.crew + 1] = observe_crew(c)
+        end
     end
     return view
 end

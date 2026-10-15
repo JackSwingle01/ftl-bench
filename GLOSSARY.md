@@ -42,7 +42,7 @@ _Avoid_: History, transcript
 Re-running a recorded Run by feeding its Action log back into the game on the same Seed.
 
 **ID**:
-The stable `type:index` handle for anything the Agent can refer to (e.g. `room:4`, `enemy:weapon:1`), always shown with its display name where one exists.
+The stable `type:index` handle for anything the Agent can refer to (e.g. `room:4`, `enemy:weapon:1`). Crew use the game's own permanent crew number (`crew:101`) so IDs never shift when someone dies. In the Observation every object carries its `id` beside its `name`, and references between objects use the bare ID; in events and messages an ID is written with its display name, e.g. `room:4 (engines)`.
 
 **Primer**:
 The short game-rules reference the Agent reads once via `ftl rules`: systems, weapon types, the rebel fleet, resources and the goal. It explains mechanics, never strategy.

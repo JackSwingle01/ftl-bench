@@ -122,6 +122,12 @@ t.test("move rejects unknown crew, unknown rooms and the wrong ship", function()
     )
 end)
 
+t.test("move refuses dead crew by name", function()
+    local raw = raw_with_interior()
+    raw.player.crew[1].dead = true
+    t.eq(select(2, C.plan("move crew:101 room:1", raw)), "crew:101 (Maria) is dead")
+end)
+
 t.test("move explains malformed IDs", function()
     local raw = raw_with_interior()
     t.eq(select(2, C.plan("move Maria room:1", raw)), "expected a crew ID like crew:101, got Maria")

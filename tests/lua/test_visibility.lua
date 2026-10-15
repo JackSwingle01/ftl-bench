@@ -185,13 +185,20 @@ t.test("a nebula blinds Sensors even when powered", function()
     t.eq(ship_view(raw).rooms[2].hidden, "no crew in room and Sensors not working")
 end)
 
-t.test("a Slug crew member reveals rooms joined to its room by a door", function()
+t.test("a Slug crew member reveals rooms sharing a wall with its room", function()
     local raw = raw_with_interior()
     raw.player.sensors_power = 0
     raw.player.crew[1].species = "slug"
+    raw.player.doors = {} -- adjacency is by wall, not by door
     local rooms = ship_view(raw).rooms
-    t.eq(rooms[2].oxygen, 80) -- joined to room 0 by door 0
-    t.eq(rooms[3].hidden, "no crew in room and Sensors not working") -- two doors away
+    t.eq(rooms[2].oxygen, 80) -- room 1 shares room 0's left wall
+    t.eq(rooms[3].hidden, "no crew in room and Sensors not working") -- touches only at a corner
+end)
+
+t.test("dead crew are not shown", function()
+    local raw = raw_with_interior()
+    raw.player.crew[1].dead = true
+    t.eq(#ship_view(raw).crew, 0)
 end)
 
 t.test("layout and door state stay visible without Sensors", function()

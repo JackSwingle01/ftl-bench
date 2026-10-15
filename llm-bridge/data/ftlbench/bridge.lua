@@ -108,7 +108,7 @@ local function read_crew(ship)
     local crew, objects = {}, {}
     for i = 0, ship.vCrewList:size() - 1 do
         local c = ship.vCrewList[i]
-        if int(c.iShipId) == 0 and not c:IsDead() then
+        if int(c.iShipId) == 0 then
             local uid = int(c.extend.selfId)
             objects[uid] = c
             local skills = {}
@@ -123,6 +123,7 @@ local function read_crew(ship)
                 health_max = c.health.second,
                 room = int(c.iRoomId),
                 on_enemy_ship = int(c.currentShipId) ~= 0,
+                dead = c:IsDead(),
                 skills = skills,
             }
         end
@@ -170,20 +171,24 @@ local function read_raw()
 end
 
 ---Carry out a resolved Command. Returns an error message on runtime failure.
----@param action ResolvedCommand
+---@param cmd ResolvedCommand
 ---@return string?
-local function execute(action)
-    if action.kind == "pause" then
+local function execute(cmd)
+    if cmd.kind == "pause" then
         Hyperspace.App.gui.bPaused = true
-    elseif action.kind == "unpause" then
+    elseif cmd.kind == "unpause" then
         Hyperspace.App.gui.bPaused = false
-    elseif action.kind == "move" then
-        if not crew_objects[action.crew]:MoveToRoom(action.room, -1, false) then
-            return "crew cannot reach that room"
+    elseif cmd.kind == "move" then
+        local crew = crew_objects[cmd.crew]
+        local room = (cmd.enemy and "enemy:room:" or "room:") .. cmd.room
+        if not crew then
+            return ("crew:%d is no longer aboard"):format(cmd.crew)
+        elseif not crew:MoveToRoom(cmd.room, -1, false) then
+            return ("crew:%d (%s) cannot reach %s"):format(cmd.crew, crew:GetName(), room)
         end
-    elseif action.kind == "door" then
-        for _, id in ipairs(action.doors) do
-            door_objects[id + 1].bOpen = action.open
+    elseif cmd.kind == "door" then
+        for _, id in ipairs(cmd.doors) do
+            door_objects[id + 1].bOpen = cmd.open
         end
     end
     -- "wait" needs nothing from the game: the CLI does the waiting.
@@ -203,12 +208,12 @@ local function handle_inbox(raw)
         inbox_offset = inbox_offset + #line + 1
         local id, wall_ms, text = line:match("^([^\t]*)\t([^\t]*)\t(.*)$")
         if id then
-            local action, err = Commands.plan(text, raw)
-            if action then
-                err = execute(action)
+            local cmd, err = Commands.plan(text, raw)
+            if cmd then
+                err = execute(cmd)
             end
             local status = err and ("error\t" .. err)
-                or (action and action.seconds and ("ok\t" .. action.seconds))
+                or (cmd and cmd.seconds and ("ok\t" .. cmd.seconds))
                 or "ok"
             append(LIVE .. "/results.txt", id .. "\t" .. status .. "\n")
             if run_dir then
@@ -234,6 +239,8 @@ local function tick()
         end
     end
     local out = Visibility.observe(prev, raw, {})
+    -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
+    out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
     handle_inbox(raw)
     prev = raw
