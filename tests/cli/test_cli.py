@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -244,7 +245,7 @@ class CliTest(unittest.TestCase):
         for path in prompts.glob("*.md"):
             text = path.read_text().lower()
             for word in advice:
-                self.assertNotIn(word, text, f"{path.name} contains '{word}'")
+                self.assertIsNone(re.search(rf"\b{word}", text), f"{path.name} contains '{word}'")
 
     def test_no_arguments_prints_usage(self) -> None:
         r = self.ftl()

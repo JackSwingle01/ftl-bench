@@ -53,9 +53,11 @@ winning. `ftl map` shows for each beacon how many jumps remain before the fleet 
   upgraded, which adds an autopilot with reduced evasion.
 - Sensors: show your own ship's interior; higher levels show more of the enemy ship.
 - Doors: control door strength against boarders.
-- Optional systems found later: Teleporter (send crew to the enemy ship), Cloaking (become
-  briefly untargetable), Hacking, Mind Control, Artillery, Battery (temporary extra power),
+- Optional systems that can be bought or found later: Teleporter (send crew to the enemy ship),
+  Cloaking (become briefly untargetable), Hacking, Mind Control, Battery (temporary extra power),
   Clone Bay (revives dead crew).
+- Every ship starts with Piloting, Engines, Oxygen and Weapons; most also start with Shields,
+  Medbay, Doors and Sensors. `ftl state` lists the systems your ship has.
 - Damage to a room damages the system in it and lowers its usable power until repaired.
 - Ion damage locks a system's power for a while and strips shield layers; it does no hull damage.
 
@@ -65,12 +67,15 @@ winning. `ftl map` shows for each beacon how many jumps remain before the fleet 
   `ftl target` picks the room; `ftl autofire on` fires weapons as soon as they charge.
 - Lasers: projectiles, often several per volley. Each shield layer stops one.
 - Ion weapons: remove shield layers and ionize systems, no hull damage.
-- Missiles: pass through shields, use a missile per shot.
+- Missiles: pass through normal shield layers, use a missile per shot. A Zoltan shield blocks them,
+  and defense drones can shoot them down.
 - Beams: never miss. They draw a line across rooms; each shield layer reduces their damage by 1,
   so a beam does nothing if shields are at least as strong as its damage.
-- Bombs: teleport into a room, ignoring shields; use a missile each.
+- Bombs: teleport into a room, ignoring normal shield layers; use a missile each. They never miss.
+  A Zoltan shield blocks them.
 - Flak: fires several projectiles at once.
-- Evasion: each projectile has a chance to miss equal to the target's evasion. Beams never miss.
+- Evasion: each projectile has a chance to miss equal to the target's evasion. Beams and bombs
+  never miss.
 
 ## Crew
 
