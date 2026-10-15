@@ -198,13 +198,9 @@ local function plan_jump(args, raw)
     if #args ~= 1 or not (beacon or sector) or b_enemy or s_enemy or not map then
         return nil, JUMP_USAGE
     end
-    local blocker = FtlBench.Visibility.jump_blocker(raw)
-    if blocker == "an event is open" then
-        return nil, "an event is open; answer it first"
-    elseif blocker then
-        return nil, blocker
-    end
+    -- First check the target is valid, then whether the ship can jump right now.
     local here = find_beacon(map, map.current) --[[@as RawBeacon]]
+    local resolved
     if sector then
         if not here.exit then
             return nil, "next sectors can only be chosen at the exit beacon"
@@ -212,27 +208,42 @@ local function plan_jump(args, raw)
         local offered = {}
         for _, s in ipairs(map.sector_choices or {}) do
             if s.index == sector then
-                return { kind = "jump_sector", sector = sector }
+                resolved = { kind = "jump_sector", sector = sector }
             end
             offered[#offered + 1] = "sector:" .. s.index
         end
-        return nil,
-            ("sector:%d is not one of the next sectors (%s)"):format(
-                sector,
-                table.concat(offered, ", ")
-            )
-    end
-    beacon = beacon --[[@as integer]] -- not a sector, so it is a beacon
-    if not find_beacon(map, beacon) then
-        return nil, "no beacon:" .. beacon
-    end
-    for _, l in ipairs(FtlBench.Visibility.current_links(map)) do
-        if l == beacon then
-            return { kind = "jump", beacon = beacon }
+        if not resolved then
+            return nil,
+                ("sector:%d is not one of the next sectors (%s)"):format(
+                    sector,
+                    table.concat(offered, ", ")
+                )
+        end
+    else
+        beacon = beacon --[[@as integer]] -- not a sector, so it is a beacon
+        if not find_beacon(map, beacon) then
+            return nil, "no beacon:" .. beacon
+        end
+        for _, l in ipairs(FtlBench.Visibility.current_links(map)) do
+            if l == beacon then
+                resolved = { kind = "jump", beacon = beacon }
+            end
+        end
+        if not resolved then
+            return nil,
+                ("beacon:%d is not linked to the current beacon (beacon:%d)"):format(
+                    beacon,
+                    map.current
+                )
         end
     end
-    return nil,
-        ("beacon:%d is not linked to the current beacon (beacon:%d)"):format(beacon, map.current)
+    local blocker = FtlBench.Visibility.jump_blocker(raw)
+    if blocker == "an event is open" then
+        return nil, "an event is open; answer it first"
+    elseif blocker then
+        return nil, blocker
+    end
+    return resolved
 end
 
 ---@param args string[]
@@ -338,6 +349,8 @@ local handlers = {
     unpause = function(_, raw)
         if raw.pause.event then
             return nil, "an event is open; answer it first"
+        elseif raw.pause.menu then
+            return nil, "a game window is open (store, upgrades or menu); close it first"
         end
         return { kind = "unpause" }
     end,

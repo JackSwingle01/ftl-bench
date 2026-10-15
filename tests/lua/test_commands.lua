@@ -458,3 +458,21 @@ t.test("choose refuses unavailable, unknown or absent choices", function()
     t.eq(select(2, C.plan("choose 1", raw)), "usage: choose <choice>")
     t.eq(select(2, C.plan("choose choice:0", raw_with_systems())), "no event is open")
 end)
+
+t.test("jump reports a bad target before a charging drive", function()
+    local raw = raw_with_map()
+    raw.player.ftl_charge = 0.25
+    t.eq(
+        select(2, C.plan("jump beacon:2", raw)),
+        "beacon:2 is not linked to the current beacon (beacon:0)"
+    )
+end)
+
+t.test("unpause is refused while a game window holds the pause", function()
+    local raw = raw_in_run()
+    raw.pause.menu = true
+    t.eq(
+        select(2, C.plan("unpause", raw)),
+        "a game window is open (store, upgrades or menu); close it first"
+    )
+end)

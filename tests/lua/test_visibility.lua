@@ -637,3 +637,11 @@ t.test("a new event window produces an event", function()
     })
     t.eq(#events(after, after), 0)
 end)
+
+t.test("the state says why the game is paused", function()
+    local raw = raw_in_run()
+    raw.pause.manual, raw.pause.menu = true, true
+    local state = V.observe(nil, raw, {}).views.state
+    t.eq({ state.paused, state.paused_by }, { true, { "player", "menu" } })
+    t.eq(V.observe(nil, raw_in_run(), {}).views.state.paused_by, nil)
+end)

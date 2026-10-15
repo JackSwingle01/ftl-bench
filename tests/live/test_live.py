@@ -22,12 +22,27 @@ def ftl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def answer_events() -> None:
+    """Answer open event windows with their first available choice; tests need the game running."""
+    for _ in range(10):
+        s = state()
+        if "menu" in (s.get("paused_by") or []):
+            raise unittest.SkipTest("a game window (e.g. a store) is open; closing it is #12")
+        event = s.get("event")
+        if not event:
+            return
+        choice = next(c["id"] for c in event["choices"] if c["available"])
+        r = ftl("choose", choice)
+        assert r.returncode == 0, r.stderr
+        time.sleep(0.5)
+    raise AssertionError("event windows kept opening")
+
+
 def unpause_or_skip(case: unittest.TestCase) -> None:
-    """Unpause, or skip when an event window holds the game paused (answering events is #11)."""
+    """Unpause after answering any open event."""
+    answer_events()
     r = ftl("unpause")
-    if r.returncode != 0 and "event is open" in r.stderr:
-        case.skipTest("an event is open; run on a fresh Run (scripts/dev-run new)")
-    assert r.returncode == 0, r.stderr
+    case.assertEqual(r.returncode, 0, r.stderr)
 
 
 def runs_dir() -> Path:
@@ -284,8 +299,10 @@ class LiveNavigationTest(unittest.TestCase):
                 self.assertIn(b["id"], beacons[link]["links"])
 
     def test_jump_to_a_linked_beacon_uses_one_fuel(self) -> None:
+        answer_events()
         jumps = view("jumps")
-        self.assertTrue(jumps["ready"], jumps)
+        if not jumps["ready"]:
+            self.skipTest(f"can't jump here: {jumps.get('not_ready')}")
         target, fuel = jumps["beacons"][0], jumps["fuel"]
         r = ftl("jump", target)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -309,6 +326,48 @@ class LiveNavigationTest(unittest.TestCase):
         r = ftl("jump", far)
         self.assertEqual(r.returncode, 1)
         self.assertIn("is not linked", r.stderr)
+
+
+class LiveEventChoiceTest(unittest.TestCase):
+    """#11: answer a real event window."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+
+    def tearDown(self) -> None:
+        ftl("pause")
+
+    def test_an_event_shows_choices_and_choose_answers_it(self) -> None:
+        answer_events()
+        jumps = view("jumps")
+        if not jumps["ready"]:
+            self.skipTest(f"can't jump to reach an event: {jumps.get('not_ready')}")
+        self.assertEqual(ftl("jump", jumps["beacons"][0]).returncode, 0)
+        ftl("unpause")
+        event = None
+        for _ in range(100):
+            time.sleep(0.1)
+            event = state().get("event")
+            if event:
+                break
+        if not event:
+            self.skipTest("this beacon had no event window")
+        self.assertTrue(event["text"])
+        self.assertEqual(event["choices"][0]["id"], "choice:0")
+        first_text = event["text"]
+        choice = next(c["id"] for c in event["choices"] if c["available"])
+        self.assertEqual(ftl("choose", choice).returncode, 0)
+        time.sleep(0.5)
+        after = state().get("event")
+        self.assertTrue(after is None or after["text"] != first_text)
+        history = ftl("events", "history", "20").stdout.splitlines()
+        self.assertIn("event", [json.loads(line)["type"] for line in history])
+
+    def test_choose_without_an_event(self) -> None:
+        answer_events()
+        r = ftl("choose", "choice:0")
+        self.assertEqual((r.returncode, r.stderr.strip()), (1, "no event is open"))
 
 
 @unittest.skipUnless(

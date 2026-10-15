@@ -52,6 +52,7 @@ local function write_atomic(path, text)
 end
 
 local SENSORS = 7
+local KEY_1 = 49 -- SDLK_1
 
 ---@param n number
 ---@return integer
@@ -252,6 +253,33 @@ local function read_map(sm, sector)
     }
 end
 
+---@param r any ResourceEvent
+---@return table<string, number>
+local function read_resources(r)
+    return {
+        scrap = int(r.scrap),
+        fuel = int(r.fuel),
+        missiles = int(r.missiles),
+        drone_parts = int(r.drones),
+        crew = int(r.crew),
+    }
+end
+
+---@param gui any CommandGui
+---@return RawEvent?
+local function read_event(gui)
+    if not gui.choiceBoxOpen then
+        return nil
+    end
+    local box, choices = gui.choiceBox, {}
+    for i = 0, box.choices:size() - 1 do
+        local c = box.choices[i]
+        choices[#choices + 1] =
+            { text = c.text, type = int(c.type), rewards = read_resources(c.rewards) }
+    end
+    return { text = box.mainText, choices = choices, received = read_resources(box.rewards) }
+end
+
 -- Game objects behind the last raw state, for the executor.
 local door_objects, crew_objects, weapon_objects, drone_objects = {}, {}, {}, {}
 
@@ -302,6 +330,7 @@ local function read_raw()
         p.weapons, p.drones, weapon_objects, drone_objects = read_armaments(ship)
         p.ftl_charge, p.ftl_charge_time = ship.jump_timer.first, ship.jump_timer.second
         raw.map = read_map(app.world.starMap, raw.sector)
+        raw.event = read_event(gui)
     end
     return raw
 end
@@ -347,6 +376,16 @@ local function execute(cmd)
         if int(sys.powerState.first) ~= target then
             return ("the game stopped the change at %d power"):format(int(sys.powerState.first))
         end
+    elseif cmd.kind == "choose" then
+        -- Number keys 1-9 pick a choice in FTL's event window, the same as a player pressing them.
+        if cmd.choice > 8 then
+            return ("choice:%d can't be picked: only the first 9 choices have keys"):format(
+                cmd.choice
+            )
+        end
+        local app = Hyperspace.App
+        app:OnKeyDown(KEY_1 + cmd.choice)
+        app:OnKeyUp(KEY_1 + cmd.choice)
     elseif cmd.kind == "jump" then
         -- The game travels on its next update, as when the player clicks a beacon on the map.
         local sm = Hyperspace.App.world.starMap

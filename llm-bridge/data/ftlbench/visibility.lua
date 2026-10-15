@@ -171,6 +171,20 @@ function Visibility.is_paused(raw)
     return p.manual or p.event or p.menu
 end
 
+---Why the game is paused, or nil when it isn't.
+---@param raw RawState
+---@return string[]?
+local function paused_by(raw)
+    local p, out = raw.pause, nil
+    for _, reason in ipairs({ { p.manual, "player" }, { p.event, "event" }, { p.menu, "menu" } }) do
+        if reason[1] then
+            out = out or setmetatable({}, LIST)
+            out[#out + 1] = reason[2]
+        end
+    end
+    return out
+end
+
 ---@param n number
 ---@return integer
 local function round(n)
@@ -662,6 +676,7 @@ function Visibility.observe(prev, raw, _hooks)
             state = {
                 in_run = true,
                 paused = Visibility.is_paused(raw),
+                paused_by = paused_by(raw),
                 frame = raw.frame,
                 game_time = raw.game_time,
                 ship = raw.player and observe_ship(raw, raw.player),
