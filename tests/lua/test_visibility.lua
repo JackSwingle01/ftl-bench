@@ -266,7 +266,7 @@ local function raw_with_systems()
             level = 2,
             cap = 2,
             damage = 0,
-            ioned = false,
+            ion = 0,
             uses_reactor = true,
         },
         {
@@ -276,7 +276,7 @@ local function raw_with_systems()
             level = 1,
             cap = 1,
             damage = 0,
-            ioned = false,
+            ion = 0,
             uses_reactor = false,
         },
         {
@@ -286,7 +286,7 @@ local function raw_with_systems()
             level = 3,
             cap = 2,
             damage = 1,
-            ioned = true,
+            ion = 2,
             uses_reactor = true,
         },
     }
@@ -331,11 +331,11 @@ t.test("systems show power, level, damage and ion by system ID", function()
         max_power = 2,
         level = 2,
         damage = 0,
-        ionized = false,
+        ion = 0,
         subsystem = false,
     })
     t.eq({ systems[2].id, systems[2].subsystem }, { "system:piloting", true })
-    t.eq({ systems[3].max_power, systems[3].damage, systems[3].ionized }, { 2, 1, true })
+    t.eq({ systems[3].max_power, systems[3].damage, systems[3].ion }, { 2, 1, 2 })
 end)
 
 t.test("weapons show slot ID, name, power and charge in seconds", function()

@@ -148,7 +148,7 @@ local function read_systems(ship)
             level = int(y.powerState.second),
             cap = int(y:GetPowerCap()),
             damage = int(y.healthState.second - y.healthState.first),
-            ioned = y:Ioned(1),
+            ion = math.max(int(y.iLockCount), 0),
             uses_reactor = y.bNeedsPower,
         }
     end
@@ -257,6 +257,7 @@ local function execute(cmd)
         local ship = Hyperspace.ships.player
         local sys = ship:GetSystem(cmd.system)
         local per_click = cmd.system == 0 and 2 or 1 -- the game moves shields a layer per click
+        local target = int(sys.powerState.first) + cmd.delta
         for _ = 1, math.floor(math.abs(cmd.delta) / per_click) do
             local ok
             if cmd.delta > 0 then
@@ -265,11 +266,14 @@ local function execute(cmd)
                 ok = ship:ForceDecreaseSystemPower(cmd.system)
             end
             if not ok then
-                return "the game refused the power change"
+                break
             end
         end
         -- The game keeps restoring each system toward the power the player last chose.
         sys.lastUserPower = sys.powerState.first
+        if int(sys.powerState.first) ~= target then
+            return ("the game stopped the change at %d power"):format(int(sys.powerState.first))
+        end
     elseif cmd.kind == "weapon" then
         local ship = Hyperspace.ships.player
         local w = weapon_objects[cmd.slot + 1]

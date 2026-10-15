@@ -44,7 +44,7 @@ FtlBench = FtlBench or {}
 ---@field level integer         installed level
 ---@field cap integer           most power it can take now (level minus damage and other limits)
 ---@field damage integer
----@field ioned boolean
+---@field ion integer          ion locks on the system (0 when clear)
 ---@field uses_reactor boolean  false for subsystems (piloting, doors, sensors, battery)
 
 ---@class RawWeapon
@@ -119,6 +119,12 @@ local SYSTEM_NAMES = {
     "hacking",
 }
 Visibility.SYSTEM_NAMES = SYSTEM_NAMES
+
+---@param type integer FTL system type id
+---@return string
+function Visibility.system_id(type)
+    return "system:" .. SYSTEM_NAMES[type + 1]
+end
 local SKILLS = { "piloting", "engines", "shields", "weapons", "repair", "combat" }
 local DARK = "no crew in room and Sensors not working"
 -- Marks a table as a list so the JSON encoder writes [] even when it is empty.
@@ -227,14 +233,14 @@ end
 local function observe_system(s)
     local name = SYSTEM_NAMES[s.type + 1]
     return {
-        id = "system:" .. name,
+        id = Visibility.system_id(s.type),
         name = name,
         room = "room:" .. s.room,
         power = s.power,
         max_power = s.cap,
         level = s.level,
         damage = s.damage,
-        ionized = s.ioned,
+        ion = s.ion,
         subsystem = not s.uses_reactor,
     }
 end

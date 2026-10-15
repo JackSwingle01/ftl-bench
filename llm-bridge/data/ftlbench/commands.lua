@@ -73,6 +73,12 @@ local function find_system(raw, type)
     return nil
 end
 
+---@param id string
+---@return string
+local function locked(id)
+    return id .. " is ionized; its power is locked until the ion wears off"
+end
+
 ---@param word string
 ---@return integer? type
 local function system_type(word)
@@ -97,7 +103,7 @@ local function plan_power(args, raw)
     if not type then
         return nil, "unknown system: " .. args[1]
     end
-    local id = "system:" .. FtlBench.Visibility.SYSTEM_NAMES[type + 1]
+    local id = FtlBench.Visibility.system_id(type)
     if type == WEAPONS then
         return nil, "power weapons by weapon: use weapon <weapon> on|off"
     elseif type == DRONES then
@@ -111,14 +117,14 @@ local function plan_power(args, raw)
         return nil, ("no %s on this ship"):format(id)
     elseif not sys.uses_reactor then
         return nil, id .. " is a subsystem; its power follows its level"
-    elseif sys.ioned then
-        return nil, id .. " is ionized; its power is locked until the ion wears off"
+    elseif sys.ion > 0 then
+        return nil, locked(id)
     elseif sys.power + delta < 0 then
         return nil, ("%s has only %d power"):format(id, sys.power)
     elseif sys.power + delta > sys.cap then
         return nil, ("%s can take at most %d power (has %d)"):format(id, sys.cap, sys.power)
     elseif delta > free_reactor(raw) then
-        return nil, ("not enough reactor power (%d free)"):format(free_reactor(raw))
+        return nil, ("%s needs %d reactor power (%d free)"):format(id, delta, free_reactor(raw))
     end
     return { kind = "power", system = type, delta = delta }
 end
@@ -141,6 +147,15 @@ local function plan_armament(kind, args, raw)
     local item = (list or {})[slot + 1]
     if not item then
         return nil, ("no %s:%d"):format(kind, slot)
+    end
+    if state == "on" and not item.powered then
+        local sys = find_system(raw, kind == "weapon" and WEAPONS or DRONES)
+        if sys and sys.ion > 0 then
+            return nil, locked(FtlBench.Visibility.system_id(sys.type))
+        end
+    end
+    if kind == "drone" and state == "on" and not item.powered and raw.player.drone_parts == 0 then
+        return nil, ("drone:%d (%s) needs a drone part; none left"):format(slot, item.name)
     end
     if kind == "weapon" and state == "on" and not item.powered then
         local label = ("weapon:%d (%s) needs %d power"):format(slot, item.name, item.power)

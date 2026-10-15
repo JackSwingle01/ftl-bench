@@ -172,7 +172,7 @@ local function raw_with_systems()
             level = 2,
             cap = 2,
             damage = 0,
-            ioned = false,
+            ion = 0,
             uses_reactor = true,
         },
         {
@@ -182,7 +182,7 @@ local function raw_with_systems()
             level = 1,
             cap = 1,
             damage = 0,
-            ioned = false,
+            ion = 0,
             uses_reactor = false,
         },
         {
@@ -192,7 +192,7 @@ local function raw_with_systems()
             level = 3,
             cap = 3,
             damage = 0,
-            ioned = false,
+            ion = 0,
             uses_reactor = true,
         },
         {
@@ -202,7 +202,7 @@ local function raw_with_systems()
             level = 2,
             cap = 2,
             damage = 0,
-            ioned = true,
+            ion = 1,
             uses_reactor = true,
         },
         {
@@ -212,7 +212,7 @@ local function raw_with_systems()
             level = 2,
             cap = 2,
             damage = 0,
-            ioned = false,
+            ion = 0,
             uses_reactor = true,
         },
     }
@@ -268,7 +268,10 @@ t.test("power respects free reactor power and the system's cap", function()
     )
     raw.player.systems[1].power = 0
     raw.player.reactor.used = 7
-    t.eq(select(2, C.plan("power shields +2", raw)), "not enough reactor power (1 free)")
+    t.eq(
+        select(2, C.plan("power shields +2", raw)),
+        "system:shields needs 2 reactor power (1 free)"
+    )
 end)
 
 t.test("power can't drop below zero", function()
@@ -331,4 +334,29 @@ t.test("weapon and drone explain bad IDs and states", function()
     t.eq(select(2, C.plan("weapon weapon:1 fire", raw)), "usage: weapon <weapon> on|off")
     t.eq(select(2, C.plan("drone drone:3 on", raw)), "no drone:3")
     t.eq(C.plan("drone drone:0 off", raw), { kind = "drone", slot = 0, on = false })
+end)
+
+t.test("weapons can't be powered while the weapons system is ionized", function()
+    local raw = raw_with_systems()
+    raw.player.systems[3].ion = 1
+    t.eq(
+        select(2, C.plan("weapon weapon:1 on", raw)),
+        "system:weapons is ionized; its power is locked until the ion wears off"
+    )
+end)
+
+t.test("drones need drone parts and an un-ionized drones system", function()
+    local raw = raw_with_systems()
+    raw.player.drones[1].powered = false
+    raw.player.drone_parts = 0
+    t.eq(
+        select(2, C.plan("drone drone:0 on", raw)),
+        "drone:0 (Defense Drone I) needs a drone part; none left"
+    )
+    raw.player.drone_parts = 3
+    raw.player.systems[5].ion = 2
+    t.eq(
+        select(2, C.plan("drone drone:0 on", raw)),
+        "system:drones is ionized; its power is locked until the ion wears off"
+    )
 end)
