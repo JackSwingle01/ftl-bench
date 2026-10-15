@@ -7,7 +7,8 @@ based on Hyperspace v1.23.2. Every change is marked `ftl-bench` in `lua/modules/
 Added so far:
 
 - `CApp` input functions `OnMouseMove`, `OnLButtonDown/Up`, `OnKeyDown/Up`, so a mod can press buttons inside the
-  game. Only the dev autostart (`dev-probe/`) uses them; scored Runs never install it (see ADR 0002).
+  game. The dev autostart (`dev-probe/`) clicks menu buttons with them; the bridge presses number keys for `choose`
+  (see ADR 0002).
 - `MainMenu.continueButton`, `MainMenu.startButton`, `ShipBuilder.startButton` (dev autostart).
 - `WeaponSystem.PowerWeapon`, `WeaponSystem.DePowerWeapon`, `DroneSystem.PowerDrone` (power weapons and drones the way
   the UI does).

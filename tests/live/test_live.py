@@ -38,7 +38,7 @@ def answer_events() -> None:
     raise AssertionError("event windows kept opening")
 
 
-def unpause_or_skip(case: unittest.TestCase) -> None:
+def answer_events_and_unpause(case: unittest.TestCase) -> None:
     """Unpause after answering any open event."""
     answer_events()
     r = ftl("unpause")
@@ -82,7 +82,7 @@ class LiveGameTest(unittest.TestCase):
     def test_pause_and_unpause(self) -> None:
         self.assertEqual(ftl("pause").returncode, 0)
         self.assertEqual(state()["paused"], True)
-        unpause_or_skip(self)
+        answer_events_and_unpause(self)
         self.assertEqual(state()["paused"], False)
 
     def test_game_time_advances_only_while_unpaused(self) -> None:
@@ -90,7 +90,7 @@ class LiveGameTest(unittest.TestCase):
         before = state()["game_time"]
         self.assertEqual(ftl("wait", "1").returncode, 0)
         self.assertEqual(state()["game_time"], before)
-        unpause_or_skip(self)
+        answer_events_and_unpause(self)
         before = state()["game_time"]
         self.assertEqual(ftl("wait", "1").returncode, 0)
         advanced = state()["game_time"] - before
@@ -164,11 +164,12 @@ class LiveShipTest(unittest.TestCase):
         self.assertTrue(all(d["open"] for d in state()["ship"]["doors"]))
 
     def test_move_crew_to_another_room(self) -> None:
+        answer_events()
         ship = state()["ship"]
         mover = ship["crew"][0]
         target = next(r["id"] for r in ship["rooms"] if r["id"] != mover["room"])
         self.assertEqual(ftl("move", mover["id"], target).returncode, 0)
-        unpause_or_skip(self)
+        answer_events_and_unpause(self)
         now = mover
         for _ in range(100):
             time.sleep(0.1)
@@ -258,7 +259,7 @@ class LiveEventsTest(unittest.TestCase):
     def test_suffocating_crew_produce_crew_hurt(self) -> None:
         new_events()
         ftl("door", "all", "open")
-        unpause_or_skip(self)
+        answer_events_and_unpause(self)
         seen: list[dict[str, Any]] = []
         for _ in range(90):
             time.sleep(1)
@@ -306,7 +307,7 @@ class LiveNavigationTest(unittest.TestCase):
         target, fuel = jumps["beacons"][0], jumps["fuel"]
         r = ftl("jump", target)
         self.assertEqual(r.returncode, 0, r.stderr)
-        unpause_or_skip(self)
+        answer_events_and_unpause(self)
         current = None
         for _ in range(150):
             time.sleep(0.1)

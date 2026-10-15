@@ -104,8 +104,8 @@ FtlBench = FtlBench or {}
 
 ---@class RawChoice
 ---@field text string
----@field type integer          0 normal, 1 blue option, 2 requirement not met
----@field rewards table<string, number>  resource changes the game displays on the choice
+---@field blue boolean          a blue option (the ship meets a special requirement)
+---@field available boolean     false when the game shows the option but won't allow it
 
 ---@class RawEvent
 ---@field text string
@@ -176,7 +176,9 @@ end
 ---@return string[]?
 local function paused_by(raw)
     local p, out = raw.pause, nil
-    for _, reason in ipairs({ { p.manual, "player" }, { p.event, "event" }, { p.menu, "menu" } }) do
+    -- The game also sets its menu pause for an event window, so "menu" means any other window.
+    local menu = p.menu and not p.event
+    for _, reason in ipairs({ { p.manual, "player" }, { p.event, "event" }, { menu, "menu" } }) do
         if reason[1] then
             out = out or setmetatable({}, LIST)
             out[#out + 1] = reason[2]
@@ -537,9 +539,9 @@ local function observe_event(e)
         choices[i] = {
             id = "choice:" .. (i - 1),
             text = c.text,
-            blue = c.type == 1 or nil,
-            available = c.type ~= 2,
-            shows = nonzero(c.rewards),
+            blue = c.blue or nil,
+            available = c.available,
+            -- No resource hints: whether the game fills them for hidden-outcome choices is unverified (#14).
         }
     end
     return { text = e.text, choices = choices, received = nonzero(e.received) }

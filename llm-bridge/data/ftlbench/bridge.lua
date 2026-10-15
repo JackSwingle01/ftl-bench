@@ -274,8 +274,9 @@ local function read_event(gui)
     local box, choices = gui.choiceBox, {}
     for i = 0, box.choices:size() - 1 do
         local c = box.choices[i]
-        choices[#choices + 1] =
-            { text = c.text, type = int(c.type), rewards = read_resources(c.rewards) }
+        -- ChoiceText.type: 0 normal, 1 blue option, 2 requirement not met (from FTL's renderer; see #14).
+        local type = int(c.type)
+        choices[#choices + 1] = { text = c.text, blue = type == 1, available = type ~= 2 }
     end
     return { text = box.mainText, choices = choices, received = read_resources(box.rewards) }
 end
@@ -378,11 +379,6 @@ local function execute(cmd)
         end
     elseif cmd.kind == "choose" then
         -- Number keys 1-9 pick a choice in FTL's event window, the same as a player pressing them.
-        if cmd.choice > 8 then
-            return ("choice:%d can't be picked: only the first 9 choices have keys"):format(
-                cmd.choice
-            )
-        end
         local app = Hyperspace.App
         app:OnKeyDown(KEY_1 + cmd.choice)
         app:OnKeyUp(KEY_1 + cmd.choice)

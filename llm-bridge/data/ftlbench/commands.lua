@@ -21,6 +21,9 @@ FtlBench = FtlBench or {}
 
 local Commands = {}
 
+-- Commands that still work while an event window is open.
+local EVENT_SAFE = { choose = true, wait = true, pause = true, unpause = true }
+
 local WAIT_ERROR = "wait takes 0.1 to 10 seconds in steps of 0.1"
 
 ---Parse an ID like "room:4" or "enemy:room:4".
@@ -259,8 +262,10 @@ local function plan_choose(args, raw)
     local c = raw.event.choices[n + 1]
     if not c then
         return nil, "no choice:" .. n
-    elseif c.type == 2 then
+    elseif not c.available then
         return nil, ("choice:%d (%s) is not available"):format(n, c.text)
+    elseif n > 8 then
+        return nil, ("choice:%d can't be picked: the game only has keys for the first 9"):format(n)
     end
     return { kind = "choose", choice = n }
 end
@@ -387,6 +392,8 @@ function Commands.plan(text, raw)
     end
     if not raw.in_run then
         return nil, "no Run in progress"
+    elseif raw.pause.event and not EVENT_SAFE[name] then
+        return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
     end
     return handler(words, raw)
 end

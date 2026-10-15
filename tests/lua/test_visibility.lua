@@ -587,10 +587,10 @@ local function raw_with_event()
     raw.event = {
         text = "You find a small ship struggling through the asteroids.",
         choices = {
-            { text = "Hail them.", type = 0, rewards = {} },
-            { text = "(Engi Crew) Talk them through.", type = 1, rewards = {} },
-            { text = "(Long-Ranged Scanners) Scan.", type = 2, rewards = {} },
-            { text = "Take the fuel.", type = 0, rewards = { fuel = 3, scrap = 0 } },
+            { text = "Hail them.", blue = false, available = true },
+            { text = "(Engi Crew) Talk them through.", blue = true, available = true },
+            { text = "(Long-Ranged Scanners) Scan.", blue = false, available = false },
+            { text = "Take the fuel.", blue = false, available = true },
         },
         received = { scrap = 15, fuel = 0 },
     }
@@ -611,10 +611,17 @@ t.test("an open event shows its text and numbered choices", function()
     )
 end)
 
-t.test("a choice shows only the resource changes the game displays", function()
+t.test("a choice carries nothing beyond its id, text and availability", function()
     local e = V.observe(nil, raw_with_event(), {}).views.state.event
-    t.eq(e.choices[4].shows, { fuel = 3 })
-    t.eq(e.choices[1].shows, nil)
+    for _, c in ipairs(e.choices) do
+        for key in pairs(c) do
+            t.eq(
+                ({ id = true, text = true, blue = true, available = true })[key],
+                true,
+                "choice." .. key
+            )
+        end
+    end
 end)
 
 t.test("rewards the event window displays are reported as received", function()
@@ -644,4 +651,10 @@ t.test("the state says why the game is paused", function()
     local state = V.observe(nil, raw, {}).views.state
     t.eq({ state.paused, state.paused_by }, { true, { "player", "menu" } })
     t.eq(V.observe(nil, raw_in_run(), {}).views.state.paused_by, nil)
+end)
+
+t.test("an event window is reported as an event, not also as a menu", function()
+    local raw = raw_in_run()
+    raw.pause.event, raw.pause.menu = true, true -- the game sets both for an event window
+    t.eq(V.observe(nil, raw, {}).views.state.paused_by, { "event" })
 end)

@@ -439,8 +439,8 @@ local function raw_with_event()
     raw.event = {
         text = "An event.",
         choices = {
-            { text = "Yes.", type = 0, rewards = {} },
-            { text = "(Scanners) Scan.", type = 2, rewards = {} },
+            { text = "Yes.", blue = false, available = true },
+            { text = "(Scanners) Scan.", blue = false, available = false },
         },
         received = {},
     }
@@ -475,4 +475,25 @@ t.test("unpause is refused while a game window holds the pause", function()
         select(2, C.plan("unpause", raw)),
         "a game window is open (store, upgrades or menu); close it first"
     )
+end)
+
+t.test("choose only reaches the first nine choices, as the game's keys do", function()
+    local raw = raw_with_event()
+    for i = 3, 10 do
+        raw.event.choices[i] = { text = "More.", blue = false, available = true }
+    end
+    t.eq(
+        select(2, C.plan("choose choice:9", raw)),
+        "choice:9 can't be picked: the game only has keys for the first 9"
+    )
+end)
+
+t.test("an open event window blocks every action except choose, wait and pause", function()
+    local raw = raw_with_event()
+    raw.player.crew = raw_with_interior().player.crew
+    t.eq(select(2, C.plan("move crew:101 room:1", raw)), "an event is open; answer it first")
+    t.eq(select(2, C.plan("power shields -2", raw)), "an event is open; answer it first")
+    t.eq(C.plan("wait 1", raw), { kind = "wait", seconds = 1 })
+    t.eq(C.plan("pause", raw), { kind = "pause" })
+    t.eq(C.plan("choose choice:0", raw), { kind = "choose", choice = 0 })
 end)
