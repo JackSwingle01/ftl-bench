@@ -36,6 +36,8 @@ FtlBench = FtlBench or {}
 ---@field on_enemy_ship boolean
 ---@field dead boolean?
 ---@field stun number?         seconds of stun left
+---@field mind_controlled boolean?
+---@field taking_damage boolean? health dropped within the last couple of seconds
 ---@field skills integer[] piloting, engines, shields, weapons, repair, combat
 
 ---@class RawSystem
@@ -69,7 +71,9 @@ FtlBench = FtlBench or {}
 ---@field sensors_power integer?  effective Sensors power (0 if missing, broken or ionized)
 ---@field rooms RawRoom[]?
 ---@field doors RawDoor[]?
----@field crew RawCrew[]?         own crew only
+---@field crew RawCrew[]?         own crew only (for the enemy: its crew; on_enemy_ship = aboard our ship)
+---@field sensors_manned boolean?
+---@field lifeform_scanner boolean?
 ---@field reactor { used: integer, max: integer }?
 ---@field systems RawSystem[]?
 ---@field shield_layers integer?
@@ -112,6 +116,16 @@ FtlBench = FtlBench or {}
 ---@field choices RawChoice[]
 ---@field received table<string, number>  rewards the event window displays
 
+---@class RawEnemy: RawShip
+---@field class string
+---@field hostile boolean
+---@field cloaked boolean
+---@field flagship boolean
+---@field evasion number
+---@field oxygen number
+---@field hacked_system integer?  system type our hacking drone is attached to
+---@field destroyed boolean?
+
 ---@class RawState
 ---@field in_run boolean
 ---@field frame integer        bridge ticks since the Run started
@@ -125,6 +139,7 @@ FtlBench = FtlBench or {}
 ---@field player RawShip?
 ---@field map RawMap?
 ---@field event RawEvent?    the open event window, if any
+---@field enemy RawEnemy?
 
 ---@class Observation
 ---@field views { state: table, map: table?, jumps: table? }
@@ -271,9 +286,11 @@ end
 
 ---@param r RawRoom
 ---@param visible boolean
-local function observe_room(r, visible)
+---@param prefix string? "enemy:" for the enemy ship
+---@param hidden string? why a dark room is hidden
+local function observe_room(r, visible, prefix, hidden)
     local room = {
-        id = "room:" .. r.id,
+        id = (prefix or "") .. "room:" .. r.id,
         name = r.system and SYSTEM_NAMES[r.system + 1],
         x = math.floor(r.x / TILE),
         y = math.floor(r.y / TILE),
@@ -283,8 +300,8 @@ local function observe_room(r, visible)
     if visible then
         room.oxygen, room.fires, room.breaches = round(r.oxygen), r.fires, r.breaches
     else
-        room.hidden = DARK
-        if fire_visible(r, false) then
+        room.hidden = hidden or DARK
+        if not prefix and fire_visible(r, false) then -- unverified for the enemy ship, so hidden there
             room.fires = r.fires
         end
     end
@@ -292,9 +309,15 @@ local function observe_room(r, visible)
 end
 
 ---@param d RawDoor
-local function observe_door(d)
-    local other = d.room2 >= 0 and ("room:" .. d.room2) or "space"
-    return { id = "door:" .. d.id, rooms = { "room:" .. d.room1, other }, open = d.open }
+---@param prefix string? "enemy:" for the enemy ship
+local function observe_door(d, prefix)
+    prefix = prefix or ""
+    local other = d.room2 >= 0 and (prefix .. "room:" .. d.room2) or "space"
+    return {
+        id = prefix .. "door:" .. d.id,
+        rooms = { prefix .. "room:" .. d.room1, other },
+        open = d.open,
+    }
 end
 
 ---@param c RawCrew
@@ -371,6 +394,44 @@ local function observe_power(ship, view)
 end
 
 ---@param raw RawState
+---@return boolean
+local function senses_lifeforms(raw)
+    local ship = raw.player or {}
+    if ship.lifeform_scanner then
+        return true
+    end
+    for _, c in ipairs(ship.crew or {}) do
+        if c.species == "slug" and not c.dead then
+            return true
+        end
+    end
+    return false
+end
+
+---Enemy crew aboard our ship: the warning always shows; details only where we can see or sense.
+---@param raw RawState
+---@param lit table<integer, boolean>? our lit rooms (nil when all are lit)
+---@param view table
+local function observe_intruders(raw, lit, view)
+    view.intruders = setmetatable({}, LIST)
+    local sense = senses_lifeforms(raw)
+    for _, c in ipairs(raw.enemy and raw.enemy.crew or {}) do
+        if c.on_enemy_ship and not c.dead then
+            view.intruders_detected = true
+            if lit == nil or lit[c.room] or sense then
+                view.intruders[#view.intruders + 1] = {
+                    id = "enemy:crew:" .. c.uid,
+                    race = c.species,
+                    room = "room:" .. c.room,
+                    health = round(c.health),
+                    health_max = round(c.health_max),
+                }
+            end
+        end
+    end
+end
+
+---@param raw RawState
 ---@param ship RawShip
 local function observe_ship(raw, ship)
     local view = { hull = ship.hull, hull_max = ship.hull_max, scrap = ship.scrap }
@@ -394,6 +455,7 @@ local function observe_ship(raw, ship)
         end
     end
     observe_power(ship, view)
+    observe_intruders(raw, lit, view)
     return view
 end
 
@@ -462,7 +524,9 @@ local function crew_events(before, after, events)
             local label = crew_label(c)
             if c.dead then
                 events[#events + 1] = { type = "crew_killed", crew = label }
-            elseif health_band(c) < health_band(was) then
+            elseif
+                (c.taking_damage and not was.taking_damage) or health_band(c) < health_band(was)
+            then
                 events[#events + 1] = {
                     type = "crew_hurt",
                     crew = label,
@@ -497,6 +561,32 @@ local function system_events(before, after, events)
     end
 end
 
+local observe_enemy -- defined below with the other views; events compare enemy views too
+
+---@param prev RawState
+---@param raw RawState
+---@param events table[]
+local function enemy_events(prev, raw, events)
+    local was, now = prev.enemy, raw.enemy
+    if now and not now.destroyed and not (was and not was.destroyed) then
+        events[#events + 1] = { type = "enemy_appeared", class = now.class, hostile = now.hostile }
+    elseif was and not was.destroyed and now and now.destroyed then
+        events[#events + 1] = { type = "enemy_destroyed", class = was.class }
+    elseif was and not was.destroyed and not now then
+        events[#events + 1] = { type = "enemy_left", class = was.class }
+    end
+    if was and now then
+        local seen = index_by(observe_enemy(prev, was).crew, "id")
+        for _, c in ipairs(now.crew or {}) do
+            local id = "enemy:crew:" .. c.uid
+            if c.dead and seen[id] then
+                events[#events + 1] =
+                    { type = "enemy_crew_killed", crew = ("%s (%s)"):format(id, c.name) }
+            end
+        end
+    end
+end
+
 ---Events a human would notice, found by comparing this frame with the previous one.
 -- ponytail: a load that lands straight on the game-over screen has no previous frame, so no event.
 ---@param prev RawState?
@@ -524,6 +614,9 @@ local function observe_events(prev, raw)
             received = nonzero(raw.event.received),
         }
     end
+    if prev then
+        enemy_events(prev, raw, events)
+    end
     if prev and raw.game_over and not prev.game_over then
         local event = run_result(raw)
         event.type = "game_over"
@@ -545,6 +638,137 @@ local function observe_event(e)
         }
     end
     return { text = e.text, choices = choices, received = nonzero(e.received) }
+end
+
+local HACK_EVASION = { [1] = true, [6] = true } -- engines, piloting
+local HACK_OXYGEN = 2
+
+---Our effective Sensors level against the enemy (visible-state.md section 1.1).
+---@param raw RawState
+---@param enemy RawEnemy
+---@return integer
+local function sensors_level(raw, enemy)
+    local ship = raw.player or {}
+    local power = ship.sensors_power or 0
+    if raw.nebula or power <= 0 then
+        return 0
+    end
+    local level = math.min(power + (ship.sensors_manned and 1 or 0), 4)
+    return enemy.flagship and math.min(level, 2) or level
+end
+
+---Enemy rooms we can see into, and why the others are hidden.
+---@param raw RawState
+---@param enemy RawEnemy
+---@param level integer
+---@return table<integer, boolean> visible
+---@return string hidden
+local function enemy_room_vision(raw, enemy, level)
+    local seen, hidden = {}, "needs Sensors level 2"
+    local rooms = index_by(enemy.rooms, "id")
+    for _, c in ipairs((raw.player or {}).crew or {}) do
+        if c.on_enemy_ship and not c.dead then
+            seen[c.room] = true
+            if c.species == "slug" and not enemy.cloaked and rooms[c.room] then
+                for _, r in ipairs(enemy.rooms) do
+                    if share_wall(rooms[c.room], r) then
+                        seen[r.id] = true
+                    end
+                end
+            end
+        end
+    end
+    for _, c in ipairs(enemy.crew or {}) do
+        if c.mind_controlled and not c.on_enemy_ship then
+            seen[c.room] = true
+        end
+    end
+    if enemy.cloaked then
+        return seen, "enemy is cloaked"
+    end
+    if level >= 2 then
+        for _, r in ipairs(enemy.rooms) do
+            seen[r.id] = true
+        end
+    end
+    for _, s in ipairs(enemy.systems or {}) do
+        if s.type == enemy.hacked_system then
+            seen[s.room] = true
+        end
+    end
+    return seen, hidden
+end
+
+---@param raw RawState
+---@param enemy RawEnemy
+function observe_enemy(raw, enemy)
+    local level = sensors_level(raw, enemy)
+    local seen, hidden = enemy_room_vision(raw, enemy, level)
+    local view = {
+        class = enemy.class,
+        hostile = enemy.hostile,
+        cloaked = enemy.cloaked,
+        hull = enemy.hull,
+        hull_max = enemy.hull_max,
+        shields = { layers = enemy.shield_layers, max_layers = enemy.shield_layers_max },
+        sensors_level = level,
+        rooms = setmetatable({}, LIST),
+        doors = setmetatable({}, LIST),
+        systems = setmetatable({}, LIST),
+        crew = setmetatable({}, LIST),
+        drones = setmetatable({}, LIST),
+    }
+    for i, r in ipairs(enemy.rooms) do
+        view.rooms[i] = observe_room(r, seen[r.id] == true, "enemy:", hidden)
+    end
+    for i, d in ipairs(enemy.doors or {}) do
+        view.doors[i] = observe_door(d, "enemy:")
+    end
+    for i, s in ipairs(enemy.systems or {}) do
+        local sys = observe_system(s)
+        local detailed = s.type == enemy.hacked_system or (level >= 4 and not enemy.cloaked)
+        view.systems[i] = detailed and sys or { id = sys.id, name = sys.name, room = sys.room }
+        view.systems[i].id, view.systems[i].room = "enemy:" .. sys.id, "enemy:" .. sys.room
+    end
+    local detect = not enemy.cloaked and senses_lifeforms(raw)
+    for _, c in ipairs(enemy.crew or {}) do
+        if not c.dead and not c.on_enemy_ship and (seen[c.room] or level >= 2 or detect) then
+            local crew =
+                { id = "enemy:crew:" .. c.uid, race = c.species, room = "enemy:room:" .. c.room }
+            if level >= 2 then
+                crew.name, crew.health, crew.health_max =
+                    c.name, round(c.health), round(c.health_max)
+            end
+            view.crew[#view.crew + 1] = crew
+        end
+    end
+    if enemy.cloaked then
+        view.weapons = "enemy is cloaked"
+    elseif level < 3 then
+        view.weapons = "needs Sensors level 3"
+    else
+        view.weapons = setmetatable({}, LIST)
+        for i, w in ipairs(enemy.weapons or {}) do
+            view.weapons[i] = {
+                id = "enemy:weapon:" .. (i - 1),
+                name = w.name,
+                powered = w.powered,
+                charge = tenths(w.charge),
+                charge_time = tenths(w.charge_time),
+            }
+        end
+    end
+    for _, d in ipairs(enemy.drones or {}) do
+        if d.deployed then
+            view.drones[#view.drones + 1] = { name = d.name }
+        end
+    end
+    if HACK_EVASION[enemy.hacked_system] then
+        view.evasion = round(enemy.evasion)
+    elseif enemy.hacked_system == HACK_OXYGEN then
+        view.oxygen = round(enemy.oxygen)
+    end
+    return view
 end
 
 local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1
@@ -684,6 +908,7 @@ function Visibility.observe(prev, raw, _hooks)
                 ship = raw.player and observe_ship(raw, raw.player),
                 sector = raw.sector,
                 event = raw.event and observe_event(raw.event),
+                enemy = raw.enemy and observe_enemy(raw, raw.enemy),
             },
         },
         events = setmetatable(observe_events(prev, raw), LIST),

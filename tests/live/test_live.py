@@ -30,7 +30,10 @@ def answer_events() -> None:
             raise unittest.SkipTest("a game window (e.g. a store) is open; closing it is #12")
         event = s.get("event")
         if not event:
-            return
+            time.sleep(0.3)  # an event window can open a few frames after an arrival
+            if not state().get("event"):
+                return
+            continue
         choice = next(c["id"] for c in event["choices"] if c["available"])
         r = ftl("choose", choice)
         assert r.returncode == 0, r.stderr
@@ -38,10 +41,21 @@ def answer_events() -> None:
     raise AssertionError("event windows kept opening")
 
 
+def act(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run a Command; if an event window opened first (common in fights), answer it and retry."""
+    r = ftl(*args)
+    for _ in range(5):
+        if r.returncode == 0 or "event is open" not in r.stderr:
+            break
+        answer_events()
+        r = ftl(*args)
+    return r
+
+
 def answer_events_and_unpause(case: unittest.TestCase) -> None:
     """Unpause after answering any open event."""
     answer_events()
-    r = ftl("unpause")
+    r = act("unpause")
     case.assertEqual(r.returncode, 0, r.stderr)
 
 
@@ -168,7 +182,8 @@ class LiveShipTest(unittest.TestCase):
         ship = state()["ship"]
         mover = ship["crew"][0]
         target = next(r["id"] for r in ship["rooms"] if r["id"] != mover["room"])
-        self.assertEqual(ftl("move", mover["id"], target).returncode, 0)
+        r = act("move", mover["id"], target)
+        self.assertEqual(r.returncode, 0, r.stderr)
         answer_events_and_unpause(self)
         now = mover
         for _ in range(100):
@@ -257,17 +272,37 @@ class LiveEventsTest(unittest.TestCase):
         self.assertEqual(new_events(), [])
 
     def test_suffocating_crew_produce_crew_hurt(self) -> None:
-        new_events()
-        ftl("door", "all", "open")
+        # Vent a single airlock room with one crew member in it, so the rest of the ship keeps
+        # its air for later tests.
+        answer_events()
+        ship = state()["ship"]
+        airlocks = [d for d in ship["doors"] if "space" in d["rooms"]]
+        room = airlocks[0]["rooms"][0]
+        vents = [d["id"] for d in airlocks if d["rooms"][0] == room]
+        crew = ship["crew"][0]
+        home = crew["room"]
+        self.assertEqual(act("move", crew["id"], room).returncode, 0)
         answer_events_and_unpause(self)
-        seen: list[dict[str, Any]] = []
-        for _ in range(90):
-            time.sleep(1)
-            seen += new_events()
-            if any(e["type"] == "crew_hurt" for e in seen):
+        for _ in range(100):
+            time.sleep(0.1)
+            if next(c for c in state()["ship"]["crew"] if c["id"] == crew["id"])["room"] == room:
                 break
+        new_events()
+        for door in vents:
+            act("door", door, "open")
+        seen: list[dict[str, Any]] = []
+        try:
+            for _ in range(60):
+                time.sleep(0.5)
+                seen += new_events()
+                if any(e["type"] == "crew_hurt" for e in seen):
+                    break
+        finally:
+            for door in vents:
+                act("door", door, "close")
+            act("move", crew["id"], home)
         hurt = next(e for e in seen if e["type"] == "crew_hurt")
-        self.assertRegex(hurt["crew"], r"^crew:\d+ \(.+\)$")
+        self.assertEqual(hurt["crew"].split(" ")[0], crew["id"])
         for key in ("frame", "game_time", "wall_s", "health", "health_max"):
             self.assertIn(key, hurt)
         r = ftl("events", "history", "1")
@@ -371,6 +406,84 @@ class LiveEventChoiceTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr.strip()), (1, "no event is open"))
 
 
+def find_enemy() -> dict[str, Any] | None:
+    """Jump (answering events) until an enemy ship is present; None if none turns up."""
+    for _ in range(8):
+        answer_events()
+        enemy = state().get("enemy")
+        if enemy:
+            return enemy
+        jumps = view("jumps")
+        if not jumps["ready"] or ftl("jump", jumps["beacons"][0]).returncode != 0:
+            return None
+        ftl("unpause")
+        for _ in range(100):
+            time.sleep(0.1)
+            if state().get("event") or state().get("enemy"):
+                break
+    return None
+
+
+class LiveEnemyTest(unittest.TestCase):
+    """#6: a real enemy ship, seen only as far as our Sensors allow (Kestrel: Sensors 1)."""
+
+    enemy: dict[str, Any]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+        enemy = find_enemy()
+        if not enemy:
+            raise unittest.SkipTest("no enemy ship found within 8 jumps")
+        cls.enemy = enemy
+
+    def tearDown(self) -> None:
+        ftl("pause")
+
+    def test_1_unmanned_sensors_1_hide_the_enemy_interior(self) -> None:
+        ftl("pause")
+        e = state()["enemy"]
+        if e["sensors_level"] >= 2:
+            self.skipTest("Sensors already manned")
+        self.assertIsInstance(e["hull"], int)
+        self.assertTrue(e["rooms"] and e["doors"] and e["systems"])
+        for room in e["rooms"]:
+            self.assertRegex(room["id"], r"^enemy:room:\d+$")
+            self.assertNotIn("oxygen", room, room)
+        self.assertEqual(e["crew"], [])
+        self.assertEqual(e["weapons"], "needs Sensors level 3")
+        for s in e["systems"]:
+            self.assertEqual(set(s), {"id", "name", "room"})
+
+    def test_2_manning_sensors_reveals_the_interior(self) -> None:
+        answer_events()
+        ship = state()["ship"]
+        sensors_room = system("sensors")["room"]
+        r = None
+        for mover in (c for c in ship["crew"] if c["room"] != sensors_room):
+            r = act("move", mover["id"], sensors_room)
+            if r.returncode == 0:
+                break
+        if r is None or r.returncode != 0:
+            self.skipTest(f"no crew can reach Sensors now: {r.stderr.strip() if r else 'no crew'}")
+        act("unpause")
+        e: dict[str, Any] = {}
+        for _ in range(100):
+            time.sleep(0.1)
+            e = state().get("enemy") or {}
+            if e.get("sensors_level", 0) >= 2:
+                break
+        ftl("pause")
+        if not e:
+            self.skipTest("the enemy left or was destroyed")
+        if e["sensors_level"] == 0:
+            self.skipTest("our Sensors are down (damaged, ionized or in a nebula)")
+        self.assertEqual(e["sensors_level"], 2)
+        self.assertIn("oxygen", e["rooms"][0])  # level 2 shows the interior
+        for crew in e["crew"]:  # automated ships have no crew at all
+            self.assertIn("name", crew)
+
+
 @unittest.skipUnless(
     os.environ.get("FTL_LIVE_DESTRUCTIVE"), "ends the Run; set FTL_LIVE_DESTRUCTIVE=1"
 )
@@ -402,6 +515,24 @@ class LiveGameOverTest(unittest.TestCase):
             (record["victory"], record["score"], record["sector"]),
             (False, s["score"], s["sector"]),
         )
+
+
+def load_tests(
+    loader: unittest.TestLoader, _tests: unittest.TestSuite, _pattern: str | None
+) -> unittest.TestSuite:
+    """Quiet start-beacon tests first; tests that travel or seek fights last, so a fight
+    doesn't disturb the rest."""
+    order = (
+        LiveGameTest,
+        LiveShipTest,
+        LivePowerTest,
+        LiveEventsTest,
+        LiveNavigationTest,
+        LiveEventChoiceTest,
+        LiveEnemyTest,
+        LiveGameOverTest,
+    )
+    return unittest.TestSuite(loader.loadTestsFromTestCase(case) for case in order)
 
 
 if __name__ == "__main__":

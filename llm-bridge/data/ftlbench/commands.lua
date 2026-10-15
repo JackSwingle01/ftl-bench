@@ -312,9 +312,9 @@ local function plan_move(args, raw)
     elseif enemy and not crew.on_enemy_ship then
         return nil, label .. " is on our ship; use a room:N"
     end
-    -- ponytail: enemy rooms are not range-checked until the enemy ship is in raw state (#6).
-    if not enemy and not (raw.player.rooms or {})[room + 1] then
-        return nil, "no room:" .. room
+    local rooms = enemy and (raw.enemy or {}).rooms or raw.player.rooms
+    if not (rooms or {})[room + 1] then
+        return nil, ("no %sroom:%d"):format(enemy and "enemy:" or "", room)
     end
     return { kind = "move", crew = uid, room = room, enemy = enemy }
 end

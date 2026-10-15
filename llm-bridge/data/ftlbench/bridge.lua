@@ -111,11 +111,13 @@ end
 
 ---@param ship any ShipManager
 ---@return RawCrew[], table<integer, any> crew objects by uid
-local function read_crew(ship)
+---@param owner integer? 0 for our crew (default), 1 for the enemy's
+local function read_crew(ship, owner)
+    owner = owner or 0
     local crew, objects = {}, {}
     for i = 0, ship.vCrewList:size() - 1 do
         local c = ship.vCrewList[i]
-        if int(c.iShipId) == 0 then
+        if int(c.iShipId) == owner then
             local uid = int(c.extend.selfId)
             objects[uid] = c
             local skills = {}
@@ -129,7 +131,8 @@ local function read_crew(ship)
                 health = c.health.first,
                 health_max = c.health.second,
                 room = int(c.iRoomId),
-                on_enemy_ship = int(c.currentShipId) ~= 0,
+                on_enemy_ship = int(c.currentShipId) ~= owner, -- aboard the other ship
+                mind_controlled = c.bMindControlled,
                 dead = c:IsDead(),
                 stun = c.fStunTime,
                 skills = skills,
@@ -274,11 +277,72 @@ local function read_event(gui)
     local box, choices = gui.choiceBox, {}
     for i = 0, box.choices:size() - 1 do
         local c = box.choices[i]
-        -- ChoiceText.type: 0 normal, 1 blue option, 2 requirement not met (from FTL's renderer; see #14).
+        -- ChoiceText.type: 0 normal, 1 requirement not met (seen live: an unaffordable toll, whose key
+        -- press does nothing), 2 blue option (inferred; see #14).
         local type = int(c.type)
-        choices[#choices + 1] = { text = c.text, blue = type == 1, available = type ~= 2 }
+        choices[#choices + 1] = { text = c.text, blue = type == 2, available = type ~= 1 }
     end
     return { text = box.mainText, choices = choices, received = read_resources(box.rewards) }
+end
+
+---The enemy ship, if one is here. Raw state holds everything; Visibility decides what is shown.
+---@param ship any ShipManager
+---@param player any ShipManager
+---@return RawEnemy
+local function read_enemy(ship, player)
+    local shields = ship:GetShieldPower()
+    local weapons, drones = read_armaments(ship)
+    local hacked
+    local hacking = player.hackingSystem
+    if hacking and hacking.drone and hacking.drone.arrived and hacking.currentSystem then
+        hacked = int(hacking.currentSystem.iSystemType)
+    end
+    return {
+        class = ship.myBlueprint.desc.title:GetText(),
+        hostile = ship._targetable.hostile,
+        cloaked = ship.cloakSystem ~= nil and ship.cloakSystem.bTurnedOn,
+        flagship = ship.myBlueprint.blueprintName:find("BOSS") ~= nil,
+        destroyed = ship.bDestroyed,
+        hull = int(ship.ship.hullIntegrity.first),
+        hull_max = int(ship.ship.hullIntegrity.second),
+        scrap = int(ship.currentScrap),
+        shield_layers = int(shields.first),
+        shield_layers_max = int(shields.second),
+        evasion = ship:GetDodgeFactor(),
+        oxygen = ship:GetOxygenPercentage(),
+        rooms = read_rooms(ship),
+        doors = (read_doors(ship)),
+        systems = read_systems(ship),
+        weapons = weapons,
+        drones = drones,
+        crew = (read_crew(ship, 1)),
+        hacked_system = hacked,
+    }
+end
+
+---@param ship any ShipManager
+---@param augment string
+---@return boolean
+local function has_augment(ship, augment)
+    local ok, count = pcall(function()
+        return ship:HasAugmentation(augment)
+    end)
+    return ok and count ~= nil and count ~= false and count ~= 0
+end
+
+-- Per crew uid: last health seen and the game time it last dropped, for taking_damage.
+local health_seen, last_drop = {}, {}
+local DAMAGE_WINDOW = 2 -- game seconds a drop counts as "taking damage"
+
+---@param crew RawCrew[]
+local function mark_damage(crew)
+    for _, c in ipairs(crew) do
+        if health_seen[c.uid] and c.health < health_seen[c.uid] then
+            last_drop[c.uid] = game_time
+        end
+        health_seen[c.uid] = c.health
+        c.taking_damage = last_drop[c.uid] ~= nil and game_time - last_drop[c.uid] < DAMAGE_WINDOW
+    end
 end
 
 -- Game objects behind the last raw state, for the executor.
@@ -315,12 +379,13 @@ local function read_raw()
             hull_max = int(ship.ship.hullIntegrity.second),
             scrap = int(ship.currentScrap),
             oxygen = ship:GetOxygenPercentage(),
-            sensors_power = sensors and int(sensors:GetEffectivePower()) or 0,
+            sensors_power = sensors and int(sensors.powerState.first) or 0, -- base power; manning is added by Visibility
             rooms = read_rooms(ship),
         }
         doors, door_objects = read_doors(ship)
         raw.player.doors = doors
         raw.player.crew, crew_objects = read_crew(ship)
+        mark_damage(raw.player.crew)
         local p, pm = raw.player, Hyperspace.PowerManager.GetPowerManager(0)
         p.reactor = { used = int(pm.currentPower.first), max = int(pm.currentPower.second) }
         p.systems = read_systems(ship)
@@ -330,6 +395,10 @@ local function read_raw()
         p.missiles, p.drone_parts = int(ship:GetMissileCount()), int(ship:GetDroneCount())
         p.weapons, p.drones, weapon_objects, drone_objects = read_armaments(ship)
         p.ftl_charge, p.ftl_charge_time = ship.jump_timer.first, ship.jump_timer.second
+        p.sensors_manned = sensors ~= nil and int(sensors.iActiveManned) > 0
+        p.lifeform_scanner = has_augment(ship, "LIFE_SCANNER")
+        local enemy = Hyperspace.ships.enemy
+        raw.enemy = enemy and read_enemy(enemy, ship) or nil
         raw.map = read_map(app.world.starMap, raw.sector)
         raw.event = read_event(gui)
     end
@@ -506,6 +575,7 @@ os.remove(LIVE .. "/run.txt") -- no Run until on_init says so
 script.on_init(function()
     frame, game_time, prev = 0, 0.0, nil
     scouted, scouted_sector = {}, nil -- markers seen in an earlier Run must not carry over
+    health_seen, last_drop = {}, {}
     local name = "runs/" .. os.date("%Y%m%d-%H%M%S")
     run_dir = BASE .. "/" .. name
     mkdir(run_dir)

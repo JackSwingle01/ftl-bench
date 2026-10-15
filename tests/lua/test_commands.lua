@@ -497,3 +497,13 @@ t.test("an open event window blocks every action except choose, wait and pause",
     t.eq(C.plan("pause", raw), { kind = "pause" })
     t.eq(C.plan("choose choice:0", raw), { kind = "choose", choice = 0 })
 end)
+
+t.test("move to an enemy room checks the enemy ship has it", function()
+    local raw = raw_with_interior()
+    raw.enemy = raw_with_interior().player --[[@as RawEnemy]] -- any ship with rooms 0-2
+    t.eq(
+        C.plan("move crew:102 enemy:room:1", raw),
+        { kind = "move", crew = 102, room = 1, enemy = true }
+    )
+    t.eq(select(2, C.plan("move crew:102 enemy:room:7", raw)), "no enemy:room:7")
+end)

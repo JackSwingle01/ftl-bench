@@ -426,6 +426,17 @@ t.test("fire above a system shows even in the dark", function()
     t.eq(events(before, after), { { type = "fire_started", room = "room:2 (shields)", fires = 1 } })
 end)
 
+t.test("crew hurt is reported the moment damage starts", function()
+    local before, after = two_frames()
+    after.player.crew[1].health, after.player.crew[1].taking_damage = 84, true -- was 85
+    t.eq(events(before, after), {
+        { type = "crew_hurt", crew = "crew:101 (Maria)", health = 84, health_max = 100 },
+    })
+    local still = deep_copy(after)
+    still.player.crew[1].health = 83 -- still taking damage, same band: no new event
+    t.eq(#events(after, still), 0)
+end)
+
 t.test("crew hurt is reported when health crosses 75, 50 and 25 percent", function()
     local before, after = two_frames()
     before.player.crew[1].health, after.player.crew[1].health = 80, 70
@@ -657,4 +668,296 @@ t.test("an event window is reported as an event, not also as a menu", function()
     local raw = raw_in_run()
     raw.pause.event, raw.pause.menu = true, true -- the game sets both for an event window
     t.eq(V.observe(nil, raw, {}).views.state.paused_by, { "event" })
+end)
+
+-- #6: the enemy ship. Two rooms: 0 (weapons), 1 (shields). One door. Two crew: Grub in room 0 (human),
+-- Krix in room 1 (mantis). Our Sensors: level 1, unmanned, so no enemy interior unless stated.
+---@return RawState
+local function raw_with_enemy()
+    local raw = raw_with_systems()
+    raw.player.sensors_power, raw.player.sensors_manned = 1, false
+    raw.enemy = {
+        class = "Rebel Fighter",
+        hostile = true,
+        cloaked = false,
+        flagship = false,
+        hull = 8,
+        hull_max = 10,
+        scrap = 0,
+        shield_layers = 1,
+        shield_layers_max = 1,
+        evasion = 25,
+        oxygen = 90,
+        rooms = {
+            {
+                id = 0,
+                x = 0,
+                y = 0,
+                w = 70,
+                h = 70,
+                system = 3,
+                oxygen = 100,
+                fires = 1,
+                breaches = 1,
+            },
+            {
+                id = 1,
+                x = 70,
+                y = 0,
+                w = 70,
+                h = 35,
+                system = 0,
+                oxygen = 80,
+                fires = 0,
+                breaches = 0,
+            },
+        },
+        doors = { { id = 0, room1 = 0, room2 = 1, open = true } },
+        systems = {
+            {
+                type = 3,
+                room = 0,
+                power = 2,
+                level = 3,
+                cap = 3,
+                damage = 0,
+                ion = 0,
+                uses_reactor = true,
+            },
+            {
+                type = 0,
+                room = 1,
+                power = 2,
+                level = 2,
+                cap = 2,
+                damage = 1,
+                ion = 0,
+                uses_reactor = true,
+            },
+        },
+        weapons = {
+            {
+                name = "Basic Laser",
+                powered = true,
+                power = 1,
+                charge = 3.2,
+                charge_time = 10,
+                missiles = false,
+            },
+        },
+        drones = { { name = "Defense Drone", powered = true, deployed = true } },
+        crew = {
+            {
+                uid = 201,
+                name = "Grub",
+                species = "human",
+                health = 90,
+                health_max = 100,
+                room = 0,
+                on_enemy_ship = false,
+                skills = { 1, 1, 1, 1, 1, 1 },
+            },
+            {
+                uid = 202,
+                name = "Krix",
+                species = "mantis",
+                health = 40,
+                health_max = 100,
+                room = 1,
+                on_enemy_ship = false,
+                skills = { 1, 1, 1, 1, 1, 1 },
+            },
+        },
+    }
+    return raw
+end
+
+local function enemy_view(raw)
+    return V.observe(nil, raw, {}).views.state.enemy
+end
+
+t.test("with no enemy ship there is no enemy view", function()
+    t.eq(enemy_view(raw_with_systems()), nil)
+end)
+
+t.test(
+    "always visible: class, relationship, cloak, hull, shields, layout, doors, system names, deployed drones",
+    function()
+        local e = enemy_view(raw_with_enemy())
+        t.eq(
+            { e.class, e.hostile, e.cloaked, e.hull, e.hull_max },
+            { "Rebel Fighter", true, false, 8, 10 }
+        )
+        t.eq(e.shields, { layers = 1, max_layers = 1 })
+        t.eq(
+            e.doors,
+            { { id = "enemy:door:0", rooms = { "enemy:room:0", "enemy:room:1" }, open = true } }
+        )
+        t.eq(e.systems[1], { id = "enemy:system:weapons", name = "weapons", room = "enemy:room:0" })
+        t.eq(e.drones, { { name = "Defense Drone" } })
+        t.eq(e.sensors_level, 1)
+    end
+)
+
+t.test("below Sensors 2 the interior, crew and weapons are hidden", function()
+    local e = enemy_view(raw_with_enemy())
+    t.eq(e.rooms[1], {
+        id = "enemy:room:0",
+        name = "weapons",
+        x = 0,
+        y = 0,
+        w = 2,
+        h = 2,
+        hidden = "needs Sensors level 2",
+    })
+    t.eq(#e.crew, 0)
+    t.eq(e.weapons, "needs Sensors level 3")
+    t.eq({ e.evasion, e.oxygen }, { nil, nil })
+end)
+
+t.test("Sensors 2 (level 1 manned) shows rooms and crew with names and health", function()
+    local raw = raw_with_enemy()
+    raw.player.sensors_manned = true
+    local e = enemy_view(raw)
+    t.eq(e.sensors_level, 2)
+    t.eq({ e.rooms[1].oxygen, e.rooms[1].fires, e.rooms[1].breaches }, { 100, 1, 1 })
+    t.eq(e.crew[2], {
+        id = "enemy:crew:202",
+        name = "Krix",
+        race = "mantis",
+        room = "enemy:room:1",
+        health = 40,
+        health_max = 100,
+    })
+    t.eq(e.weapons, "needs Sensors level 3")
+end)
+
+t.test("Sensors 3 shows weapons and their charge", function()
+    local raw = raw_with_enemy()
+    raw.player.sensors_power = 3
+    t.eq(enemy_view(raw).weapons, {
+        {
+            id = "enemy:weapon:0",
+            name = "Basic Laser",
+            powered = true,
+            charge = 3.2,
+            charge_time = 10,
+        },
+    })
+end)
+
+t.test("system power, level, damage and ion need Sensors 4 (level 3 manned)", function()
+    local raw = raw_with_enemy()
+    raw.player.sensors_power = 3
+    t.eq(enemy_view(raw).systems[2].power, nil)
+    raw.player.sensors_manned = true
+    local s = enemy_view(raw).systems[2]
+    t.eq({ s.power, s.max_power, s.level, s.damage, s.ion }, { 2, 2, 2, 1, 0 })
+end)
+
+t.test("broken Sensors and nebulas give level 0; the Flagship caps it at 2", function()
+    local raw = raw_with_enemy()
+    raw.player.sensors_power, raw.player.sensors_manned = 0, true -- manning a broken system gives nothing
+    t.eq(enemy_view(raw).sensors_level, 0)
+    raw = raw_with_enemy()
+    raw.player.sensors_power, raw.nebula = 3, true
+    t.eq(enemy_view(raw).sensors_level, 0)
+    raw = raw_with_enemy()
+    raw.player.sensors_power, raw.player.sensors_manned, raw.enemy.flagship = 3, true, true
+    t.eq(enemy_view(raw).sensors_level, 2)
+end)
+
+t.test("our crew aboard give vision of their room only", function()
+    local raw = raw_with_enemy()
+    raw.player.crew[1].on_enemy_ship, raw.player.crew[1].room = true, 1
+    local e = enemy_view(raw)
+    t.eq(e.rooms[2].oxygen, 80)
+    t.eq(e.rooms[1].hidden, "needs Sensors level 2")
+    t.eq(e.crew, { { id = "enemy:crew:202", race = "mantis", room = "enemy:room:1" } }) -- no name below Sensors 2
+end)
+
+t.test("a Slug or the Lifeform Scanner reveals where live enemy crew are", function()
+    local raw = raw_with_enemy()
+    raw.player.lifeform_scanner = true
+    t.eq(#enemy_view(raw).crew, 2)
+    raw = raw_with_enemy()
+    raw.player.crew[1].species = "slug"
+    t.eq(#enemy_view(raw).crew, 2)
+    t.eq(enemy_view(raw).rooms[1].hidden, "needs Sensors level 2") -- crew only, no room vision
+end)
+
+t.test(
+    "a cloak hides the interior except where our crew are, but Sensors 2+ still names crew",
+    function()
+        local raw = raw_with_enemy()
+        raw.enemy.cloaked, raw.player.sensors_power, raw.player.lifeform_scanner = true, 3, true
+        local e = enemy_view(raw)
+        t.eq(e.rooms[1].hidden, "enemy is cloaked")
+        t.eq({ #e.crew, e.crew[1].name, e.crew[1].health }, { 2, "Grub", 90 })
+        t.eq(e.weapons, "enemy is cloaked")
+    end
+)
+
+t.test(
+    "a hacked system shows its room and its details, plus evasion or oxygen for those systems",
+    function()
+        local raw = raw_with_enemy()
+        raw.enemy.hacked_system = 0 -- shields, room 1
+        local e = enemy_view(raw)
+        t.eq(e.rooms[2].oxygen, 80)
+        t.eq(e.systems[2].power, 2)
+        t.eq(e.evasion, nil)
+        raw.enemy.hacked_system, raw.enemy.systems[2].type = 1, 1 -- engines
+        t.eq(enemy_view(raw).evasion, 25)
+    end
+)
+
+t.test("never: evasion, oxygen, enemy skills, or a hidden room's contents", function()
+    local raw = raw_with_enemy()
+    raw.player.sensors_power, raw.player.sensors_manned = 3, true
+    local e = enemy_view(raw)
+    t.eq({ e.evasion, e.oxygen }, { nil, nil })
+    for _, c in ipairs(e.crew) do
+        t.eq(c.skills, nil)
+    end
+end)
+
+t.test("enemy ships appearing, being destroyed and leaving make events", function()
+    local none, enemy = raw_with_systems(), raw_with_enemy()
+    t.eq(
+        events(none, enemy),
+        { { type = "enemy_appeared", class = "Rebel Fighter", hostile = true } }
+    )
+    local dead = raw_with_enemy()
+    dead.enemy.destroyed = true
+    t.eq(events(enemy, dead), { { type = "enemy_destroyed", class = "Rebel Fighter" } })
+    t.eq(events(enemy, none), { { type = "enemy_left", class = "Rebel Fighter" } })
+end)
+
+t.test("enemy crew deaths are reported only if we could see that crew member", function()
+    local before, after = raw_with_enemy(), raw_with_enemy()
+    after.enemy.crew[2].dead = true
+    t.eq(#events(before, after), 0) -- Sensors 1: crew not visible
+    before.player.sensors_manned, after.player.sensors_manned = true, true
+    t.eq(events(before, after), { { type = "enemy_crew_killed", crew = "enemy:crew:202 (Krix)" } })
+end)
+
+t.test("boarders on our ship: the warning always, details in rooms we can see", function()
+    local raw = raw_with_enemy()
+    local boarder = raw.enemy.crew[2]
+    boarder.on_enemy_ship, boarder.room = true, 2 -- in our shields room
+    local ship = V.observe(nil, raw, {}).views.state.ship
+    t.eq(ship.intruders_detected, true)
+    t.eq(ship.intruders, {
+        {
+            id = "enemy:crew:202",
+            race = "mantis",
+            room = "room:2",
+            health = 40,
+            health_max = 100,
+        },
+    })
+    raw.player.sensors_power = 0 -- room 2 has no crew of ours: dark
+    ship = V.observe(nil, raw, {}).views.state.ship
+    t.eq({ ship.intruders_detected, #ship.intruders }, { true, 0 })
 end)
