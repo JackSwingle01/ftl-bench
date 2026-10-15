@@ -821,6 +821,12 @@ t.test("buy and upgrade need their window open; other actions need every window 
     t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0, cost = 20 })
 end)
 
+t.test("a shown event box blocks buy even when the game's event pause is clear", function()
+    local raw = raw_at_store()
+    raw.event = { text = "", choices = {}, received = {} }
+    t.eq(select(2, C.plan("buy item:0", raw)), "an event is open; answer it first")
+end)
+
 t.test("an open event blocks buy and upgrade", function()
     local raw = raw_at_store()
     raw.pause.event, raw.event = true, { text = "", choices = {}, received = {} }

@@ -1040,7 +1040,10 @@ function Visibility.observe(prev, raw, hooks)
         events = setmetatable(observe_events(prev, raw, hooks), LIST),
     }
     -- A human can open the store only with no event window up and no hostile ship here.
-    local store_usable = raw.store and not raw.pause.event and not (raw.enemy and raw.enemy.hostile)
+    local store_usable = raw.store
+        and not raw.pause.event
+        and not raw.event
+        and not (raw.enemy and raw.enemy.hostile)
     out.views.store = store_usable and observe_store(raw) or nil
     out.views.upgrades = raw.upgrades and observe_upgrades(raw)
     if raw.map then

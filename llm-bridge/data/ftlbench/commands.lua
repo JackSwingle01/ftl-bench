@@ -41,6 +41,14 @@ local WINDOW_SAFE = {
     show = true,
 }
 
+---A shown event box blocks the ship even when the game's event pause isn't set (seen live:
+---a store's greeting box left it clear, and the Agent bought before answering it).
+---@param raw RawState
+---@return boolean
+local function event_open(raw)
+    return raw.pause.event or raw.event ~= nil
+end
+
 local WAIT_ERROR = "wait takes 0.1 to 10 seconds in steps of 0.1"
 
 ---Parse an ID like "room:4" or "enemy:room:4".
@@ -606,7 +614,7 @@ local handlers = {
         return { kind = "pause" }
     end,
     unpause = function(_, raw)
-        if raw.pause.event then
+        if event_open(raw) then
             return nil, "an event is open; answer it first"
         elseif raw.pause.menu then
             return nil, "a game window is open (store, upgrades or menu); close it first"
@@ -682,9 +690,9 @@ function Commands.plan(text, raw)
     end
     if not raw.in_run then
         return nil, "no Run in progress"
-    elseif raw.pause.event and not EVENT_SAFE[name] then
+    elseif event_open(raw) and not EVENT_SAFE[name] then
         return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
-    elseif raw.pause.menu and not raw.pause.event and not WINDOW_SAFE[name] then
+    elseif raw.pause.menu and not event_open(raw) and not WINDOW_SAFE[name] then
         return nil, "a game window is open; close it first" -- hotkeys go to the window, not the ship
     end
     return handler(words, raw)
