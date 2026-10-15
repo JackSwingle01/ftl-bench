@@ -135,8 +135,54 @@ local function read_crew(ship)
     return crew, objects
 end
 
+---@param ship any ShipManager
+---@return RawSystem[]
+local function read_systems(ship)
+    local systems = {}
+    for i = 0, ship.vSystemList:size() - 1 do
+        local y = ship.vSystemList[i]
+        systems[#systems + 1] = {
+            type = int(y.iSystemType),
+            room = int(y.roomId),
+            power = int(y.powerState.first),
+            level = int(y.powerState.second),
+            cap = int(y:GetPowerCap()),
+            damage = int(y.healthState.second - y.healthState.first),
+            ioned = y:Ioned(1),
+            uses_reactor = y.bNeedsPower,
+        }
+    end
+    return systems
+end
+
+---@param ship any ShipManager
+---@return RawWeapon[], RawDrone[], any[], any[] game weapon and drone objects in slot order
+local function read_armaments(ship)
+    local weapons, drones, weapon_objs, drone_objs = {}, {}, {}, {}
+    local list = ship:GetWeaponList()
+    for i = 0, list:size() - 1 do
+        local w = list[i]
+        weapon_objs[#weapon_objs + 1] = w
+        weapons[#weapons + 1] = {
+            name = w.name,
+            powered = w.powered,
+            power = int(w.requiredPower),
+            charge = w.cooldown.first,
+            charge_time = w.cooldown.second,
+            missiles = w.blueprint.missiles > 0,
+        }
+    end
+    list = ship:GetDroneList()
+    for i = 0, list:size() - 1 do
+        local d = list[i]
+        drone_objs[#drone_objs + 1] = d
+        drones[#drones + 1] = { name = d:GetName(), powered = d.powered, deployed = d.deployed }
+    end
+    return weapons, drones, weapon_objs, drone_objs
+end
+
 -- Game objects behind the last raw state, for the executor.
-local door_objects, crew_objects = {}, {}
+local door_objects, crew_objects, weapon_objects, drone_objects = {}, {}, {}, {}
 
 ---@return RawState
 local function read_raw()
@@ -175,6 +221,14 @@ local function read_raw()
         doors, door_objects = read_doors(ship)
         raw.player.doors = doors
         raw.player.crew, crew_objects = read_crew(ship)
+        local p, pm = raw.player, Hyperspace.PowerManager.GetPowerManager(0)
+        p.reactor = { used = int(pm.currentPower.first), max = int(pm.currentPower.second) }
+        p.systems = read_systems(ship)
+        local shields = ship:GetShieldPower()
+        p.shield_layers, p.shield_layers_max = int(shields.first), int(shields.second)
+        p.evasion, p.fuel = ship:GetDodgeFactor(), int(ship.fuel_count)
+        p.missiles, p.drone_parts = int(ship:GetMissileCount()), int(ship:GetDroneCount())
+        p.weapons, p.drones, weapon_objects, drone_objects = read_armaments(ship)
     end
     return raw
 end
@@ -198,6 +252,47 @@ local function execute(cmd)
     elseif cmd.kind == "door" then
         for _, id in ipairs(cmd.doors) do
             door_objects[id + 1].bOpen = cmd.open
+        end
+    elseif cmd.kind == "power" then
+        local ship = Hyperspace.ships.player
+        local sys = ship:GetSystem(cmd.system)
+        local per_click = cmd.system == 0 and 2 or 1 -- the game moves shields a layer per click
+        for _ = 1, math.floor(math.abs(cmd.delta) / per_click) do
+            local ok
+            if cmd.delta > 0 then
+                ok = sys:IncreasePower(1, false)
+            else
+                ok = ship:ForceDecreaseSystemPower(cmd.system)
+            end
+            if not ok then
+                return "the game refused the power change"
+            end
+        end
+        -- The game keeps restoring each system toward the power the player last chose.
+        sys.lastUserPower = sys.powerState.first
+    elseif cmd.kind == "weapon" then
+        local ship = Hyperspace.ships.player
+        local w = weapon_objects[cmd.slot + 1]
+        local ok = cmd.on and ship.weaponSystem:PowerWeapon(w, true, false)
+            or not cmd.on and ship.weaponSystem:DePowerWeapon(w, true)
+        if not ok and w.powered ~= cmd.on then
+            return ("the game refused to power %s weapon:%d (%s)"):format(
+                cmd.on and "on" or "off",
+                cmd.slot,
+                w.name
+            )
+        end
+    elseif cmd.kind == "drone" then
+        local ship = Hyperspace.ships.player
+        local d = drone_objects[cmd.slot + 1]
+        local ok = cmd.on and ship.droneSystem:PowerDrone(d, true, false)
+            or not cmd.on and ship.droneSystem:DePowerDrone(d, true)
+        if not ok and d.powered ~= cmd.on then
+            return ("the game refused to power %s drone:%d (%s)"):format(
+                cmd.on and "on" or "off",
+                cmd.slot,
+                d:GetName()
+            )
         end
     end
     -- "wait" needs nothing from the game: the CLI does the waiting.

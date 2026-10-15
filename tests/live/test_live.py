@@ -159,6 +159,58 @@ class LiveShipTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr.strip()), (1, "no crew:999"))
 
 
+def system(name: str) -> dict[str, Any]:
+    return next(x for x in state()["ship"]["systems"] if x["name"] == name)
+
+
+class LivePowerTest(unittest.TestCase):
+    """#4: power, systems, weapons. Assumes the Kestrel A loadout."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+
+    def tearDown(self) -> None:
+        for slot in ("weapon:0", "weapon:1"):
+            ftl("weapon", slot, "off")
+        ftl("pause")
+
+    def test_kestrel_power_and_weapons(self) -> None:
+        ship = state()["ship"]
+        self.assertEqual(ship["reactor"]["max"], 8)
+        names = [w["name"] for w in ship["weapons"]]
+        self.assertEqual(names, ["Artemis Missiles", "Burst Laser Mark II"])
+        self.assertEqual(ship["weapons"][1]["power"], 2)
+        self.assertTrue(system("piloting")["subsystem"])
+        self.assertGreaterEqual(ship["fuel"], 0)
+
+    def test_power_a_system_down_and_up(self) -> None:
+        before, used = system("shields")["power"], state()["ship"]["reactor"]["used"]
+        self.assertEqual(ftl("power", "shields", "-2").returncode, 0)
+        time.sleep(0.1)
+        self.assertEqual(system("shields")["power"], before - 2)
+        self.assertEqual(state()["ship"]["reactor"]["used"], used - 2)
+        self.assertEqual(ftl("power", "shields", "+2").returncode, 0)
+        time.sleep(0.1)
+        self.assertEqual(system("shields")["power"], before)
+        self.assertEqual(state()["ship"]["reactor"]["used"], used)
+
+    def test_weapon_on_and_off(self) -> None:
+        r = ftl("weapon", "weapon:1", "on")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        time.sleep(0.1)
+        self.assertTrue(state()["ship"]["weapons"][1]["powered"])
+        self.assertEqual(system("weapons")["power"], 2)
+        self.assertEqual(ftl("weapon", "weapon:1", "off").returncode, 0)
+        time.sleep(0.1)
+        self.assertFalse(state()["ship"]["weapons"][1]["powered"])
+
+    def test_power_errors(self) -> None:
+        r = ftl("power", "piloting", "+1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("subsystem", r.stderr)
+
+
 @unittest.skipUnless(
     os.environ.get("FTL_LIVE_DESTRUCTIVE"), "ends the Run; set FTL_LIVE_DESTRUCTIVE=1"
 )

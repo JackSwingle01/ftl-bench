@@ -157,3 +157,178 @@ t.test("door rejects unknown doors and bad states", function()
     t.eq(select(2, C.plan("door door:1 ajar", raw)), "usage: door <door|all> open|close")
     t.eq(select(2, C.plan("door 1 open", raw)), "expected a door ID like door:3 or all, got 1")
 end)
+
+-- #4: power, weapon, drone. Reactor 5 of 8 used (3 free).
+-- Systems: shields 2/2, piloting (subsystem), weapons 1 power with cap 3, engines ionized 1/2, drones 1/2.
+local function raw_with_systems()
+    local raw = raw_with_interior()
+    local ship = raw.player
+    ship.reactor = { used = 5, max = 8 }
+    ship.systems = {
+        {
+            type = 0,
+            room = 0,
+            power = 2,
+            level = 2,
+            cap = 2,
+            damage = 0,
+            ioned = false,
+            uses_reactor = true,
+        },
+        {
+            type = 6,
+            room = 1,
+            power = 1,
+            level = 1,
+            cap = 1,
+            damage = 0,
+            ioned = false,
+            uses_reactor = false,
+        },
+        {
+            type = 3,
+            room = 2,
+            power = 1,
+            level = 3,
+            cap = 3,
+            damage = 0,
+            ioned = false,
+            uses_reactor = true,
+        },
+        {
+            type = 1,
+            room = 2,
+            power = 1,
+            level = 2,
+            cap = 2,
+            damage = 0,
+            ioned = true,
+            uses_reactor = true,
+        },
+        {
+            type = 4,
+            room = 1,
+            power = 1,
+            level = 2,
+            cap = 2,
+            damage = 0,
+            ioned = false,
+            uses_reactor = true,
+        },
+    }
+    ship.weapons = {
+        {
+            name = "Artemis Missiles",
+            powered = true,
+            power = 1,
+            charge = 0,
+            charge_time = 11,
+            missiles = true,
+        },
+        {
+            name = "Burst Laser Mark II",
+            powered = false,
+            power = 2,
+            charge = 0,
+            charge_time = 12,
+            missiles = false,
+        },
+        {
+            name = "Heavy Laser",
+            powered = false,
+            power = 3,
+            charge = 0,
+            charge_time = 9,
+            missiles = false,
+        },
+    }
+    ship.drones = { { name = "Defense Drone I", powered = true, deployed = true } }
+    return raw
+end
+
+t.test("power changes a system by name or system ID", function()
+    local raw = raw_with_systems()
+    raw.player.systems[5].type = 2 -- an oxygen system with 1 power
+    t.eq(C.plan("power oxygen -1", raw), { kind = "power", system = 2, delta = -1 })
+    t.eq(C.plan("power system:shields -2", raw), { kind = "power", system = 0, delta = -2 })
+end)
+
+t.test("shields power moves a whole layer (2 power) at a time, as in the game", function()
+    t.eq(
+        select(2, C.plan("power shields -1", raw_with_systems())),
+        "system:shields power changes 2 at a time (one layer)"
+    )
+end)
+
+t.test("power respects free reactor power and the system's cap", function()
+    local raw = raw_with_systems()
+    t.eq(
+        select(2, C.plan("power shields +2", raw)),
+        "system:shields can take at most 2 power (has 2)"
+    )
+    raw.player.systems[1].power = 0
+    raw.player.reactor.used = 7
+    t.eq(select(2, C.plan("power shields +2", raw)), "not enough reactor power (1 free)")
+end)
+
+t.test("power can't drop below zero", function()
+    t.eq(
+        select(2, C.plan("power shields -4", raw_with_systems())),
+        "system:shields has only 2 power"
+    )
+end)
+
+t.test("power refuses subsystems, ionized systems and weapon/drone systems", function()
+    local raw = raw_with_systems()
+    t.eq(
+        select(2, C.plan("power piloting +1", raw)),
+        "system:piloting is a subsystem; its power follows its level"
+    )
+    t.eq(
+        select(2, C.plan("power engines -1", raw)),
+        "system:engines is ionized; its power is locked until the ion wears off"
+    )
+    t.eq(
+        select(2, C.plan("power weapons +1", raw)),
+        "power weapons by weapon: use weapon <weapon> on|off"
+    )
+    t.eq(
+        select(2, C.plan("power drones -1", raw)),
+        "power drones by drone: use drone <drone> on|off"
+    )
+end)
+
+t.test("power explains unknown systems and bad amounts", function()
+    local raw = raw_with_systems()
+    t.eq(select(2, C.plan("power cloaking +1", raw)), "no system:cloaking on this ship")
+    t.eq(select(2, C.plan("power warp +1", raw)), "unknown system: warp")
+    t.eq(select(2, C.plan("power shields 2", raw)), "usage: power <system> +N|-N")
+    t.eq(select(2, C.plan("power shields +0", raw)), "usage: power <system> +N|-N")
+end)
+
+t.test("weapon on/off resolves a weapon slot", function()
+    local raw = raw_with_systems()
+    t.eq(C.plan("weapon weapon:1 on", raw), { kind = "weapon", slot = 1, on = true })
+    t.eq(C.plan("weapon weapon:0 off", raw), { kind = "weapon", slot = 0, on = false })
+end)
+
+t.test("weapon on needs reactor power and room in the weapons system", function()
+    local raw = raw_with_systems()
+    t.eq(
+        select(2, C.plan("weapon weapon:2 on", raw)),
+        "weapon:2 (Heavy Laser) needs 3 power; system:weapons has room for 2 more"
+    )
+    raw.player.reactor.used = 7
+    t.eq(
+        select(2, C.plan("weapon weapon:1 on", raw)),
+        "weapon:1 (Burst Laser Mark II) needs 2 power; 1 reactor power free"
+    )
+end)
+
+t.test("weapon and drone explain bad IDs and states", function()
+    local raw = raw_with_systems()
+    t.eq(select(2, C.plan("weapon weapon:5 on", raw)), "no weapon:5")
+    t.eq(select(2, C.plan("weapon weapon:1 fire", raw)), "usage: weapon <weapon> on|off")
+    t.eq(select(2, C.plan("drone drone:3 on", raw)), "no drone:3")
+    t.eq(C.plan("drone drone:0 off", raw), { kind = "drone", slot = 0, on = false })
+end)

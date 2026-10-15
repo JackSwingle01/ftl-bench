@@ -125,6 +125,98 @@ local function dump()
         "sensors",
         s:GetSystem(7) and s:GetSystem(7):GetEffectivePower()
     )
+    p("== systems")
+    for i = 0, s.vSystemList:size() - 1 do
+        local y = s.vSystemList[i]
+        p(
+            "type",
+            y.iSystemType,
+            y.name,
+            "room",
+            y.roomId,
+            "power",
+            y.powerState.first,
+            y.powerState.second,
+            "eff",
+            y:GetEffectivePower(),
+            "max",
+            y:GetMaxPower(),
+            "cap",
+            y:GetPowerCap(),
+            "health",
+            y.healthState.first,
+            y.healthState.second,
+            "ioned",
+            y:Ioned(1),
+            "lock",
+            y.iLockCount,
+            "needsPower",
+            y.bNeedsPower,
+            "manned",
+            y.iActiveManned,
+            "bonus",
+            y.iBonusPower,
+            "batt",
+            y.iBatteryPower
+        )
+    end
+    local pm = Hyperspace.PowerManager.GetPowerManager(0)
+    p(
+        "== reactor current",
+        pm.currentPower.first,
+        pm.currentPower.second,
+        "max",
+        pm:GetMaxPower(),
+        "avail",
+        pm:GetAvailablePower(),
+        "battery",
+        pm.batteryPower.first,
+        pm.batteryPower.second
+    )
+    p(
+        "== shields",
+        s:GetShieldPower().first,
+        s:GetShieldPower().second,
+        "dodge",
+        s:GetDodgeFactor(),
+        "fuel",
+        s.fuel_count,
+        "missiles",
+        s:GetMissileCount(),
+        "drones",
+        s:GetDroneCount()
+    )
+    p("== weapons")
+    local wl = s:GetWeaponList()
+    for i = 0, wl:size() - 1 do
+        local w = wl[i]
+        p(
+            "slot",
+            i,
+            "name",
+            w.name,
+            "title",
+            w.blueprint.desc.title:GetText(),
+            "bp",
+            w.blueprint.name,
+            "powered",
+            w.powered,
+            "req",
+            w.requiredPower,
+            "cd",
+            w.cooldown.first,
+            w.cooldown.second,
+            "missiles",
+            w.blueprint.missiles
+        )
+    end
+    p("== weapon slots", s.weaponSystem and s.weaponSystem.slot_count)
+    p("== drones")
+    local dl = s:GetDroneList()
+    for i = 0, dl:size() - 1 do
+        local d = dl[i]
+        p("slot", i, "name", d:GetName(), "powered", d.powered, "deployed", d.deployed)
+    end
     local f = assert(io.open("ftlbench/probe.txt", "w"))
     f:write(table.concat(out, "\n") .. "\n")
     f:close()

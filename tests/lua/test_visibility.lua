@@ -251,3 +251,119 @@ t.test("a lost Run shows victory as false, not missing", function()
     raw.sector, raw.score, raw.game_over, raw.victory = 2, 300, true, false
     t.eq(V.observe(nil, raw, {}).views.state.victory, false)
 end)
+
+-- #4: power, systems, weapons and drones (values from the live Kestrel).
+---@return RawState
+local function raw_with_systems()
+    local raw = raw_with_interior()
+    local ship = raw.player --[[@as RawShip]]
+    ship.reactor = { used = 5, max = 8 }
+    ship.systems = {
+        {
+            type = 0,
+            room = 2,
+            power = 2,
+            level = 2,
+            cap = 2,
+            damage = 0,
+            ioned = false,
+            uses_reactor = true,
+        },
+        {
+            type = 6,
+            room = 0,
+            power = 1,
+            level = 1,
+            cap = 1,
+            damage = 0,
+            ioned = false,
+            uses_reactor = false,
+        },
+        {
+            type = 3,
+            room = 1,
+            power = 0,
+            level = 3,
+            cap = 2,
+            damage = 1,
+            ioned = true,
+            uses_reactor = true,
+        },
+    }
+    ship.shield_layers, ship.shield_layers_max = 1, 1
+    ship.evasion, ship.fuel, ship.missiles, ship.drone_parts = 15, 16, 8, 2
+    ship.weapons = {
+        {
+            name = "Artemis Missiles",
+            powered = false,
+            power = 1,
+            charge = 0,
+            charge_time = 11,
+            missiles = true,
+        },
+        {
+            name = "Burst Laser Mark II",
+            powered = true,
+            power = 2,
+            charge = 4.25,
+            charge_time = 12,
+            missiles = false,
+        },
+    }
+    ship.drones = { { name = "Defense Drone I", powered = true, deployed = false } }
+    return raw
+end
+
+t.test("reactor, shields, evasion and resources are exact numbers", function()
+    local ship = ship_view(raw_with_systems())
+    t.eq(ship.reactor, { used = 5, max = 8 })
+    t.eq(ship.shields, { layers = 1, max_layers = 1 })
+    t.eq({ ship.evasion, ship.fuel, ship.missiles, ship.drone_parts }, { 15, 16, 8, 2 })
+end)
+
+t.test("systems show power, level, damage and ion by system ID", function()
+    local systems = ship_view(raw_with_systems()).systems
+    t.eq(systems[1], {
+        id = "system:shields",
+        name = "shields",
+        room = "room:2",
+        power = 2,
+        max_power = 2,
+        level = 2,
+        damage = 0,
+        ionized = false,
+        subsystem = false,
+    })
+    t.eq({ systems[2].id, systems[2].subsystem }, { "system:piloting", true })
+    t.eq({ systems[3].max_power, systems[3].damage, systems[3].ionized }, { 2, 1, true })
+end)
+
+t.test("weapons show slot ID, name, power and charge in seconds", function()
+    local weapons = ship_view(raw_with_systems()).weapons
+    t.eq(weapons[2], {
+        id = "weapon:1",
+        name = "Burst Laser Mark II",
+        powered = true,
+        power = 2,
+        charge = 4.3,
+        charge_time = 12,
+        uses_missiles = false,
+    })
+    t.eq({ weapons[1].id, weapons[1].uses_missiles }, { "weapon:0", true })
+end)
+
+t.test("drones show slot ID, name, power and whether deployed", function()
+    t.eq(ship_view(raw_with_systems()).drones, {
+        { id = "drone:0", name = "Defense Drone I", powered = true, deployed = false },
+    })
+end)
+
+t.test("a ship without weapons or drones gets empty lists", function()
+    local raw = raw_with_systems()
+    raw.player.weapons, raw.player.drones = {}, {}
+    local ship = ship_view(raw)
+    t.eq(
+        { getmetatable(ship.weapons).__jsontype, getmetatable(ship.drones).__jsontype },
+        { "array", "array" }
+    )
+end)

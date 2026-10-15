@@ -37,6 +37,29 @@ FtlBench = FtlBench or {}
 ---@field dead boolean?
 ---@field skills integer[] piloting, engines, shields, weapons, repair, combat
 
+---@class RawSystem
+---@field type integer          FTL system type id
+---@field room integer
+---@field power integer         power in use now
+---@field level integer         installed level
+---@field cap integer           most power it can take now (level minus damage and other limits)
+---@field damage integer
+---@field ioned boolean
+---@field uses_reactor boolean  false for subsystems (piloting, doors, sensors, battery)
+
+---@class RawWeapon
+---@field name string
+---@field powered boolean
+---@field power integer   reactor power needed
+---@field charge number   seconds charged
+---@field charge_time number
+---@field missiles boolean
+
+---@class RawDrone
+---@field name string
+---@field powered boolean
+---@field deployed boolean
+
 ---@class RawShip
 ---@field hull integer
 ---@field hull_max integer
@@ -46,6 +69,16 @@ FtlBench = FtlBench or {}
 ---@field rooms RawRoom[]?
 ---@field doors RawDoor[]?
 ---@field crew RawCrew[]?         own crew only
+---@field reactor { used: integer, max: integer }?
+---@field systems RawSystem[]?
+---@field shield_layers integer?
+---@field shield_layers_max integer?
+---@field evasion number?         percent
+---@field fuel integer?
+---@field missiles integer?
+---@field drone_parts integer?
+---@field weapons RawWeapon[]?    in slot order
+---@field drones RawDrone[]?      in slot order
 
 ---@class RawState
 ---@field in_run boolean
@@ -82,9 +115,10 @@ local SYSTEM_NAMES = {
     "artillery",
     "battery",
     "clonebay",
-    "mind control",
+    "mind_control",
     "hacking",
 }
+Visibility.SYSTEM_NAMES = SYSTEM_NAMES
 local SKILLS = { "piloting", "engines", "shields", "weapons", "repair", "combat" }
 local DARK = "no crew in room and Sensors not working"
 -- Marks a table as a list so the JSON encoder writes [] even when it is empty.
@@ -189,6 +223,60 @@ local function observe_crew(c)
     }
 end
 
+---@param s RawSystem
+local function observe_system(s)
+    local name = SYSTEM_NAMES[s.type + 1]
+    return {
+        id = "system:" .. name,
+        name = name,
+        room = "room:" .. s.room,
+        power = s.power,
+        max_power = s.cap,
+        level = s.level,
+        damage = s.damage,
+        ionized = s.ioned,
+        subsystem = not s.uses_reactor,
+    }
+end
+
+---@param n number
+---@return number
+local function tenths(n)
+    return math.floor(n * 10 + 0.5) / 10
+end
+
+---@param ship RawShip
+---@param view table
+local function observe_power(ship, view)
+    view.reactor = ship.reactor and { used = ship.reactor.used, max = ship.reactor.max }
+    if ship.shield_layers then
+        view.shields = { layers = ship.shield_layers, max_layers = ship.shield_layers_max }
+    end
+    view.evasion, view.fuel = ship.evasion and round(ship.evasion), ship.fuel
+    view.missiles, view.drone_parts = ship.missiles, ship.drone_parts
+    view.systems = setmetatable({}, LIST)
+    for i, s in ipairs(ship.systems or {}) do
+        view.systems[i] = observe_system(s)
+    end
+    view.weapons = setmetatable({}, LIST)
+    for i, w in ipairs(ship.weapons or {}) do
+        view.weapons[i] = {
+            id = "weapon:" .. (i - 1),
+            name = w.name,
+            powered = w.powered,
+            power = w.power,
+            charge = tenths(w.charge),
+            charge_time = tenths(w.charge_time),
+            uses_missiles = w.missiles,
+        }
+    end
+    view.drones = setmetatable({}, LIST)
+    for i, d in ipairs(ship.drones or {}) do
+        view.drones[i] =
+            { id = "drone:" .. (i - 1), name = d.name, powered = d.powered, deployed = d.deployed }
+    end
+end
+
 ---@param raw RawState
 ---@param ship RawShip
 local function observe_ship(raw, ship)
@@ -212,6 +300,7 @@ local function observe_ship(raw, ship)
             view.crew[#view.crew + 1] = observe_crew(c)
         end
     end
+    observe_power(ship, view)
     return view
 end
 
