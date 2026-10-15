@@ -231,6 +231,21 @@ class CliTest(unittest.TestCase):
         r = self.ftl("events", "history", "lots")
         self.assertEqual((r.returncode, r.stderr.strip()), (1, "usage: ftl events [history N]"))
 
+    def test_rules_prints_the_primer_without_a_running_game(self) -> None:
+        r = self.ftl("rules")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(r.stdout.startswith("FTL Primer v"))
+        for topic in ("Goal", "Rebel fleet", "Resources", "Systems", "Weapons", "Crew"):
+            self.assertIn(topic, r.stdout)
+
+    def test_primer_and_task_prompt_give_no_strategy_advice(self) -> None:
+        prompts = FTL.parents[1] / "prompts"
+        advice = ("should", "best", "recommend", "prioriti", "tip", "strategy", "good idea")
+        for path in prompts.glob("*.md"):
+            text = path.read_text().lower()
+            for word in advice:
+                self.assertNotIn(word, text, f"{path.name} contains '{word}'")
+
     def test_no_arguments_prints_usage(self) -> None:
         r = self.ftl()
         self.assertEqual(r.returncode, 1)
