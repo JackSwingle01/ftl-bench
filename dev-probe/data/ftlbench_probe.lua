@@ -250,6 +250,47 @@ local function dump()
             c.rewards.crew
         )
     end
+    local h = s.hackingSystem
+    if h then
+        local function get(o, k)
+            local ok, v = pcall(function()
+                return o[k]
+            end)
+            return ok and tostring(v) or "?"
+        end
+        p("== hacking")
+        for _, k in ipairs({
+            "bArmed",
+            "queuedSystem",
+            "currentSystem",
+            "bHacking",
+            "bBlocked",
+            "bCanHack",
+            "spendDrone",
+            "effectTimer",
+        }) do
+            p(k, get(h, k))
+        end
+        for _, k in ipairs({
+            "deployed",
+            "arrived",
+            "powered",
+            "currentSpace",
+            "destinationSpace",
+            "bDead",
+            "targetLocation",
+        }) do
+            p("drone." .. k, get(h.drone, k))
+        end
+        p("effectTimer", h.effectTimer.first, h.effectTimer.second)
+        local q = h.queuedSystem
+        p(
+            "queued.type",
+            q and q.iSystemType,
+            "current.type",
+            h.currentSystem and h.currentSystem.iSystemType
+        )
+    end
     local f = assert(io.open("ftlbench/probe.txt", "w"))
     f:write(table.concat(out, "\n") .. "\n")
     f:close()

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Play a Run with an Agent from this folder: installs the mod without dev tools, opens FTL, waits
+# for you to start a Run, then starts Claude Code here with the task prompt, allowed only `ftl`
+# and `jq`. Usage: play/start [model]   (default: the Claude Code default model)
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(dirname "$HERE")"
+pkill -f "$ROOT/game/FTL.app" && sleep 2 || true
+rm -f "$HOME/Library/Application Support/FasterThanLight/hs_crash.flag"
+"$ROOT/scripts/install-mod" >/dev/null
+open "$ROOT/game/FTL.app"
+echo "Start a Run in FTL (New Game); waiting..."
+until "$HERE/ftl" state 2>/dev/null | grep -q '"in_run":true'; do sleep 1; done
+cd "$HERE"
+export PATH="$HERE:$PATH"
+exec claude ${1:+--model "$1"} --allowedTools "Bash(ftl:*)" "Bash(jq:*)" -- "$(cat "$ROOT/prompts/task.md")"

@@ -1164,3 +1164,12 @@ t.test("a destroyed enemy ship shows as destroyed", function()
     t.eq(enemy_view(raw).destroyed, true)
     t.eq(enemy_view(raw_with_enemy()).destroyed, nil)
 end)
+
+t.test("our ability status is shown", function()
+    local raw = raw_with_systems()
+    raw.player.abilities = { cloak = { on = true }, teleporter = { charged = false, charge = 40 } }
+    t.eq(V.observe(nil, raw, {}).views.state.ship.abilities, {
+        cloak = { on = true },
+        teleporter = { charged = false, charge = 40 },
+    })
+end)

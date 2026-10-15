@@ -645,3 +645,157 @@ end)
 t.test("upgrade carries the cost it was checked against", function()
     t.eq(C.plan("upgrade shields", raw_at_store()), { kind = "upgrade", system = 0, cost = 20 })
 end)
+
+-- #8: system abilities. Our ship gains cloaking (10), battery (12), hacking (15), mind control (14)
+-- and a teleporter (9); the enemy is a two-room ship with weapons in room 0 and crew Grub (201).
+local function raw_with_abilities()
+    local raw = raw_with_systems()
+    local function add(type, power)
+        raw.player.systems[#raw.player.systems + 1] = {
+            type = type,
+            room = 1,
+            power = power,
+            level = 1,
+            cap = 1,
+            damage = 0,
+            ion = 0,
+            uses_reactor = true,
+        }
+    end
+    add(10, 1)
+    add(12, 1)
+    add(15, 1)
+    add(14, 1)
+    add(9, 1)
+    raw.player.abilities = {
+        cloak = { on = false },
+        battery = { on = false },
+        hacking = { drone = false, launched = false },
+        teleporter = { charged = true },
+    }
+    raw.player.sensors_power, raw.player.sensors_manned = 2, false
+    raw.player.drone_parts = 2
+    raw.enemy = {
+        class = "Rebel Fighter",
+        hostile = true,
+        cloaked = false,
+        flagship = false,
+        hull = 8,
+        hull_max = 10,
+        scrap = 0,
+        shield_layers = 1,
+        shield_layers_max = 1,
+        evasion = 0,
+        oxygen = 100,
+        rooms = {
+            {
+                id = 0,
+                x = 0,
+                y = 0,
+                w = 35,
+                h = 35,
+                system = 3,
+                oxygen = 100,
+                fires = 0,
+                breaches = 0,
+            },
+            { id = 1, x = 35, y = 0, w = 35, h = 35, oxygen = 100, fires = 0, breaches = 0 },
+        },
+        doors = {},
+        systems = {
+            {
+                type = 3,
+                room = 0,
+                power = 1,
+                level = 1,
+                cap = 1,
+                damage = 0,
+                ion = 0,
+                uses_reactor = true,
+            },
+        },
+        crew = {
+            {
+                uid = 201,
+                name = "Grub",
+                species = "human",
+                health = 100,
+                health_max = 100,
+                room = 1,
+                on_enemy_ship = false,
+                skills = { 1, 1, 1, 1, 1, 1 },
+            },
+        },
+    }
+    return raw
+end
+
+t.test("cloak and battery activate when the system is ready", function()
+    local raw = raw_with_abilities()
+    t.eq(C.plan("cloak", raw), { kind = "cloak" })
+    t.eq(C.plan("battery", raw), { kind = "battery" })
+    raw.player.abilities.cloak.on = true
+    t.eq(select(2, C.plan("cloak", raw)), "already cloaked")
+    t.eq(select(2, C.plan("cloak", raw_with_systems())), "no system:cloaking on this ship")
+end)
+
+t.test("hack launches the drone at an enemy system, then starts the pulse", function()
+    local raw = raw_with_abilities()
+    t.eq(C.plan("hack enemy:room:0", raw), { kind = "hack", room = 0 })
+    t.eq(select(2, C.plan("hack enemy:room:1", raw)), "enemy:room:1 has no system to hack")
+    t.eq(select(2, C.plan("hack", raw)), "no hacking drone attached yet: hack <enemy:room> first")
+    raw.player.abilities.hacking.drone = true
+    t.eq(C.plan("hack", raw), { kind = "hack_pulse" })
+end)
+
+t.test("hack can't launch a second drone, or one without drone parts", function()
+    local raw = raw_with_abilities()
+    raw.player.abilities.hacking.launched = true
+    t.eq(select(2, C.plan("hack enemy:room:0", raw)), "a hacking drone is already out")
+    raw.player.abilities.hacking.launched, raw.player.drone_parts = false, 0
+    t.eq(select(2, C.plan("hack enemy:room:0", raw)), "no drone parts to build a hacking drone")
+end)
+
+t.test("mind control needs an enemy crew member we can see", function()
+    local raw = raw_with_abilities()
+    t.eq(C.plan("mindcontrol enemy:crew:201", raw), { kind = "mindcontrol", crew = 201 })
+    t.eq(select(2, C.plan("mindcontrol enemy:crew:999", raw)), "no visible enemy:crew:999")
+    raw.player.sensors_power = 0 -- no longer visible
+    t.eq(select(2, C.plan("mindcontrol enemy:crew:201", raw)), "no visible enemy:crew:201")
+end)
+
+t.test("teleport sends crew to, or brings them back from, an enemy room", function()
+    local raw = raw_with_abilities()
+    raw.player.crew[1].room = 1 -- on the teleporter pad
+    raw.player.crew[2].room, raw.player.crew[2].on_enemy_ship = 1, true
+    t.eq(C.plan("teleport send enemy:room:1", raw), { kind = "teleport", room = 1, command = 1 })
+    t.eq(C.plan("teleport return enemy:room:1", raw), { kind = "teleport", room = 1, command = 2 })
+    raw.player.abilities.teleporter.charged = false
+    t.eq(
+        select(2, C.plan("teleport send enemy:room:1", raw)),
+        "system:teleporter is still charging"
+    )
+    t.eq(select(2, C.plan("teleport away", raw)), "usage: teleport send|return <enemy:room>")
+end)
+
+t.test("teleport needs crew to send, or crew to bring back", function()
+    local raw = raw_with_abilities()
+    for _, c in ipairs(raw.player.crew) do
+        c.room = 0
+    end
+    t.eq(
+        select(2, C.plan("teleport send enemy:room:1", raw)),
+        "no crew on the teleporter pad (room:1)"
+    )
+    t.eq(
+        select(2, C.plan("teleport return enemy:room:1", raw)),
+        "none of our crew are in enemy:room:1"
+    )
+end)
+
+t.test("show opens the map or upgrades window, even with an event or window up", function()
+    local raw = raw_with_systems()
+    t.eq(C.plan("show map", raw), { kind = "show", window = "map" })
+    t.eq(C.plan("show upgrades", raw), { kind = "show", window = "upgrades" })
+    t.eq(select(2, C.plan("show crew", raw)), "usage: show map|upgrades")
+end)

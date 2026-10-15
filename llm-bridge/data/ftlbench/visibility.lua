@@ -88,6 +88,7 @@ FtlBench = FtlBench or {}
 ---@field weapons RawWeapon[]?    in slot order
 ---@field drones RawDrone[]?      in slot order
 ---@field ftl_charge number?
+---@field abilities table<string, table>?  cloak/battery/hacking/mind/teleporter status (own ship: visible)
 ---@field ftl_charge_time number?
 
 ---@class RawBeacon
@@ -474,6 +475,7 @@ local function observe_ship(raw, ship)
     end
     observe_power(ship, view)
     observe_intruders(raw, lit, view)
+    view.abilities = ship.abilities
     return view
 end
 
@@ -884,6 +886,13 @@ local function observe_upgrades(raw)
         )
     end
     return { reactor = priced({ level = u.reactor.level }, u.reactor.cost), systems = systems }
+end
+
+---The enemy as we can see it right now (nil with no enemy ship), for rules such as "can target".
+---@param raw RawState
+---@return table?
+function Visibility.enemy_view(raw)
+    return raw.enemy and observe_enemy(raw, raw.enemy)
 end
 
 local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1
