@@ -367,3 +367,101 @@ t.test("a ship without weapons or drones gets empty lists", function()
         { "array", "array" }
     )
 end)
+
+-- #5: events found by comparing frames. Copies one raw state so a test can change the second.
+local function deep_copy(v)
+    if type(v) ~= "table" then
+        return v
+    end
+    local out = {}
+    for k, x in pairs(v) do
+        out[k] = deep_copy(x)
+    end
+    return out
+end
+
+---@return RawState, RawState
+local function two_frames()
+    local before = raw_with_systems()
+    return before, deep_copy(before)
+end
+
+local function events(before, after)
+    return V.observe(before, after, {}).events
+end
+
+t.test("no change means no events", function()
+    local before, after = two_frames()
+    t.eq(#events(before, after), 0)
+end)
+
+t.test("fire starting and going out in a visible room", function()
+    local before, after = two_frames()
+    before.player.rooms[1].fires, after.player.rooms[1].fires = 0, 2
+    t.eq(
+        events(before, after),
+        { { type = "fire_started", room = "room:0 (piloting)", fires = 2 } }
+    )
+    t.eq(events(after, before), { { type = "fire_out", room = "room:0 (piloting)" } })
+end)
+
+t.test("breaches opening and being repaired", function()
+    local before, after = two_frames()
+    before.player.rooms[2].breaches, after.player.rooms[2].breaches = 0, 1
+    t.eq(events(before, after), { { type = "breach", room = "room:1", breaches = 1 } })
+    t.eq(events(after, before), { { type = "breach_repaired", room = "room:1" } })
+end)
+
+t.test("fires and breaches in dark rooms make no events", function()
+    local before, after = two_frames()
+    before.player.sensors_power, after.player.sensors_power = 0, 0
+    after.player.rooms[2].fires, after.player.rooms[2].breaches = 1, 1 -- room 1: no crew, no system
+    t.eq(#events(before, after), 0)
+end)
+
+t.test("fire above a system shows even in the dark", function()
+    local before, after = two_frames()
+    before.player.sensors_power, after.player.sensors_power = 0, 0
+    before.player.rooms[3].fires, after.player.rooms[3].fires = 0, 1 -- room 2 holds shields
+    t.eq(events(before, after), { { type = "fire_started", room = "room:2 (shields)", fires = 1 } })
+end)
+
+t.test("crew hurt is reported when health crosses 75, 50 and 25 percent", function()
+    local before, after = two_frames()
+    before.player.crew[1].health, after.player.crew[1].health = 80, 70
+    t.eq(events(before, after), {
+        { type = "crew_hurt", crew = "crew:101 (Maria)", health = 70, health_max = 100 },
+    })
+    before.player.crew[1].health, after.player.crew[1].health = 70, 60
+    t.eq(#events(before, after), 0)
+    before.player.crew[1].health, after.player.crew[1].health = 60, 20
+    t.eq(#events(before, after), 1) -- one event even when crossing two thresholds
+end)
+
+t.test("crew killed", function()
+    local before, after = two_frames()
+    after.player.crew[1].dead, after.player.crew[1].health = true, 0
+    t.eq(events(before, after), { { type = "crew_killed", crew = "crew:101 (Maria)" } })
+end)
+
+t.test("crew stunned and recovering", function()
+    local before, after = two_frames()
+    before.player.crew[1].stun, after.player.crew[1].stun = 0, 3.5
+    t.eq(
+        events(before, after),
+        { { type = "crew_stunned", crew = "crew:101 (Maria)", seconds = 3.5 } }
+    )
+    t.eq(events(after, before), { { type = "crew_recovered", crew = "crew:101 (Maria)" } })
+end)
+
+t.test("systems ionized and clearing", function()
+    local before, after = two_frames()
+    after.player.systems[1].ion = 2
+    t.eq(events(before, after), { { type = "system_ionized", system = "system:shields", ion = 2 } })
+    t.eq(events(after, before), { { type = "system_ion_cleared", system = "system:shields" } })
+end)
+
+t.test("events are lists, so they encode as JSON arrays", function()
+    local before, after = two_frames()
+    t.eq(getmetatable(events(before, after)).__jsontype, "array")
+end)

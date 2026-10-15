@@ -7,6 +7,7 @@
 --   ftlbench/live/inbox.txt     Commands from the CLI: id \t wall_ms \t text
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
+--   ftlbench/live/run.txt       the current Run folder, relative to ftlbench/
 --   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run
 --   ftlbench/runs/<stamp>/events.jsonl    events for that Run (already filtered by Visibility)
 --   ftlbench/runs/<stamp>/score.json      Score record, rewritten every game-over frame so it ends final
@@ -128,6 +129,7 @@ local function read_crew(ship)
                 room = int(c.iRoomId),
                 on_enemy_ship = int(c.currentShipId) ~= 0,
                 dead = c:IsDead(),
+                stun = c.fStunTime,
                 skills = skills,
             }
         end
@@ -377,11 +379,14 @@ mkdir(LIVE)
 -- Start every game launch with an empty inbox so stale Commands never run.
 write_atomic(LIVE .. "/inbox.txt", "")
 write_atomic(LIVE .. "/results.txt", "")
+os.remove(LIVE .. "/run.txt") -- no Run until on_init says so
 
 script.on_init(function()
     frame, game_time, prev = 0, 0.0, nil
-    run_dir = BASE .. "/runs/" .. os.date("%Y%m%d-%H%M%S")
+    local name = "runs/" .. os.date("%Y%m%d-%H%M%S")
+    run_dir = BASE .. "/" .. name
     mkdir(run_dir)
+    write_atomic(LIVE .. "/run.txt", name)
     print("[ftlbench] Run folder " .. run_dir)
 end)
 

@@ -35,6 +35,7 @@ FtlBench = FtlBench or {}
 ---@field room integer
 ---@field on_enemy_ship boolean
 ---@field dead boolean?
+---@field stun number?         seconds of stun left
 ---@field skills integer[] piloting, engines, shields, weapons, repair, combat
 
 ---@class RawSystem
@@ -316,6 +317,107 @@ local function run_result(raw)
     return { victory = raw.victory == true, score = raw.score, sector = raw.sector }
 end
 
+---@param r RawRoom
+---@return string
+local function room_label(r)
+    local name = r.system and SYSTEM_NAMES[r.system + 1]
+    return "room:" .. r.id .. (name and (" (" .. name .. ")") or "")
+end
+
+---@param list table[]?
+---@param key string
+---@return table<any, table>
+local function index_by(list, key)
+    local out = {}
+    for _, item in ipairs(list or {}) do
+        out[item[key]] = item
+    end
+    return out
+end
+
+---0-3: how many of the 25/50/75 percent health marks a crew member is above.
+---@param c RawCrew
+---@return integer
+local function health_band(c)
+    local f = c.health / c.health_max
+    return (f > 0.75 and 3) or (f > 0.5 and 2) or (f > 0.25 and 1) or 0
+end
+
+---@param raw RawState
+---@param before RawShip
+---@param after RawShip
+---@param events table[]
+local function room_events(raw, before, after, events)
+    local lit = lit_rooms(raw, after)
+    local old = index_by(before.rooms, "id")
+    for _, r in ipairs(after.rooms or {}) do
+        local was, visible = old[r.id], lit == nil or lit[r.id] == true
+        if was then
+            local label = room_label(r)
+            if visible or r.system then -- fire icons show above systems even in the dark
+                if was.fires == 0 and r.fires > 0 then
+                    events[#events + 1] = { type = "fire_started", room = label, fires = r.fires }
+                elseif was.fires > 0 and r.fires == 0 then
+                    events[#events + 1] = { type = "fire_out", room = label }
+                end
+            end
+            if visible then
+                if was.breaches == 0 and r.breaches > 0 then
+                    events[#events + 1] = { type = "breach", room = label, breaches = r.breaches }
+                elseif was.breaches > 0 and r.breaches == 0 then
+                    events[#events + 1] = { type = "breach_repaired", room = label }
+                end
+            end
+        end
+    end
+end
+
+---@param before RawShip
+---@param after RawShip
+---@param events table[]
+local function crew_events(before, after, events)
+    local old = index_by(before.crew, "uid")
+    for _, c in ipairs(after.crew or {}) do
+        local was = old[c.uid]
+        if was and not was.dead then
+            local label = ("crew:%d (%s)"):format(c.uid, c.name)
+            if c.dead then
+                events[#events + 1] = { type = "crew_killed", crew = label }
+            elseif health_band(c) < health_band(was) then
+                events[#events + 1] = {
+                    type = "crew_hurt",
+                    crew = label,
+                    health = round(c.health),
+                    health_max = round(c.health_max),
+                }
+            end
+            if not c.dead and (was.stun or 0) <= 0 and (c.stun or 0) > 0 then
+                events[#events + 1] =
+                    { type = "crew_stunned", crew = label, seconds = tenths(c.stun) }
+            elseif not c.dead and (was.stun or 0) > 0 and (c.stun or 0) <= 0 then
+                events[#events + 1] = { type = "crew_recovered", crew = label }
+            end
+        end
+    end
+end
+
+---@param before RawShip
+---@param after RawShip
+---@param events table[]
+local function system_events(before, after, events)
+    local old = index_by(before.systems, "type")
+    for _, s in ipairs(after.systems or {}) do
+        local was = old[s.type]
+        if was and was.ion == 0 and s.ion > 0 then
+            events[#events + 1] =
+                { type = "system_ionized", system = Visibility.system_id(s.type), ion = s.ion }
+        elseif was and was.ion > 0 and s.ion == 0 then
+            events[#events + 1] =
+                { type = "system_ion_cleared", system = Visibility.system_id(s.type) }
+        end
+    end
+end
+
 ---Events a human would notice, found by comparing this frame with the previous one.
 -- ponytail: a load that lands straight on the game-over screen has no previous frame, so no event.
 ---@param prev RawState?
@@ -323,6 +425,11 @@ end
 ---@return table[]
 local function observe_events(prev, raw)
     local events = {}
+    if prev and prev.player and raw.player then
+        room_events(raw, prev.player, raw.player, events)
+        crew_events(prev.player, raw.player, events)
+        system_events(prev.player, raw.player, events)
+    end
     if prev and raw.game_over and not prev.game_over then
         local event = run_result(raw)
         event.type = "game_over"

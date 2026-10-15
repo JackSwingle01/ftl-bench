@@ -211,6 +211,45 @@ class LivePowerTest(unittest.TestCase):
         self.assertIn("subsystem", r.stderr)
 
 
+def new_events() -> list[dict[str, Any]]:
+    r = ftl("events")
+    assert r.returncode == 0, r.stderr
+    return [json.loads(line) for line in r.stdout.splitlines()]
+
+
+class LiveEventsTest(unittest.TestCase):
+    """#5: events from the real game."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+
+    def tearDown(self) -> None:
+        ftl("door", "all", "close")
+        ftl("pause")
+
+    def test_events_are_new_only(self) -> None:
+        new_events()
+        self.assertEqual(new_events(), [])
+
+    def test_suffocating_crew_produce_crew_hurt(self) -> None:
+        new_events()
+        ftl("door", "all", "open")
+        self.assertEqual(ftl("unpause").returncode, 0)
+        seen: list[dict[str, Any]] = []
+        for _ in range(90):
+            time.sleep(1)
+            seen += new_events()
+            if any(e["type"] == "crew_hurt" for e in seen):
+                break
+        hurt = next(e for e in seen if e["type"] == "crew_hurt")
+        self.assertRegex(hurt["crew"], r"^crew:\d+ \(.+\)$")
+        for key in ("frame", "game_time", "wall_s", "health", "health_max"):
+            self.assertIn(key, hurt)
+        r = ftl("events", "history", "1")
+        self.assertEqual(len(r.stdout.splitlines()), 1)
+
+
 @unittest.skipUnless(
     os.environ.get("FTL_LIVE_DESTRUCTIVE"), "ends the Run; set FTL_LIVE_DESTRUCTIVE=1"
 )

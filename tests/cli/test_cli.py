@@ -52,6 +52,17 @@ class FakeGame:
                             f.write(f"{cmd_id}\t{result}\n")
             time.sleep(0.01)
 
+    def start_run(self, name: str = "20261015-120000") -> Path:
+        run = self.live.parent / "runs" / name
+        run.mkdir(parents=True)
+        (self.live / "run.txt").write_text(f"runs/{name}")
+        return run
+
+    def add_events(self, run: Path, *events: dict[str, object]) -> None:
+        with (run / "events.jsonl").open("a") as f:
+            for e in events:
+                f.write(json.dumps(e) + "\n")
+
     def stop(self) -> None:
         self._stop.set()
         self._thread.join()
@@ -157,6 +168,68 @@ class CliTest(unittest.TestCase):
         r = self.ftl("wait", "9.99")
         self.assertEqual(r.returncode, 1)
         self.assertLess(time.monotonic() - started, 2)
+
+    def events_out(self, *args: str) -> list[dict[str, object]]:
+        r = self.ftl("events", *args)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return [json.loads(line) for line in r.stdout.splitlines()]
+
+    def test_events_returns_each_event_exactly_once(self) -> None:
+        self.start_game()
+        assert self.game
+        run = self.game.start_run()
+        self.game.add_events(run, {"type": "a"}, {"type": "b"})
+        self.assertEqual(self.events_out(), [{"type": "a"}, {"type": "b"}])
+        self.assertEqual(self.events_out(), [])
+        self.game.add_events(run, {"type": "c"})
+        self.assertEqual(self.events_out(), [{"type": "c"}])
+
+    def test_events_history_shows_the_last_n_regardless(self) -> None:
+        self.start_game()
+        assert self.game
+        run = self.game.start_run()
+        self.game.add_events(run, {"type": "a"}, {"type": "b"}, {"type": "c"})
+        self.events_out()
+        self.assertEqual(self.events_out("history", "2"), [{"type": "b"}, {"type": "c"}])
+        self.assertEqual(self.events_out(), [])
+
+    def test_a_new_run_starts_a_new_event_stream(self) -> None:
+        self.start_game()
+        assert self.game
+        first = self.game.start_run("20261015-120000")
+        self.game.add_events(first, {"type": "old"})
+        self.events_out()
+        second = self.game.start_run("20261015-130000")
+        self.game.add_events(second, {"type": "new"})
+        self.assertEqual(self.events_out(), [{"type": "new"}])
+
+    def test_a_half_written_event_waits_for_the_next_call(self) -> None:
+        self.start_game()
+        assert self.game
+        run = self.game.start_run()
+        (run / "events.jsonl").write_text('{"type": "a"}\n{"type": "b"')
+        self.assertEqual(self.events_out(), [{"type": "a"}])
+        with (run / "events.jsonl").open("a") as f:
+            f.write("}\n")
+        self.assertEqual(self.events_out(), [{"type": "b"}])
+
+    def test_events_before_any_run(self) -> None:
+        self.start_game()
+        r = self.ftl("events")
+        self.assertEqual((r.returncode, r.stderr.strip()), (1, "no Run in progress"))
+
+    def test_events_with_no_events_yet(self) -> None:
+        self.start_game()
+        assert self.game
+        self.game.start_run()
+        self.assertEqual(self.events_out(), [])
+
+    def test_events_usage(self) -> None:
+        self.start_game()
+        assert self.game
+        self.game.start_run()
+        r = self.ftl("events", "history", "lots")
+        self.assertEqual((r.returncode, r.stderr.strip()), (1, "usage: ftl events [history N]"))
 
     def test_no_arguments_prints_usage(self) -> None:
         r = self.ftl()

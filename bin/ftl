@@ -20,7 +20,7 @@ BASE = Path(
 LIVE = BASE / "live"
 STALE_AFTER = 3.0  # seconds without a state update before the game counts as not running
 ANSWER_TIMEOUT = 3.0  # seconds to wait for the mod to answer a Command
-USAGE = "usage: ftl state | ftl <command> [args...]   e.g. ftl pause, ftl wait 2.5"
+USAGE = "usage: ftl state | ftl events [history N] | ftl <command> [args...]   e.g. ftl pause"
 
 
 def fail(message: str, code: int) -> None:
@@ -62,12 +62,38 @@ def send(text: str) -> tuple[str, str]:
     raise AssertionError("unreachable")
 
 
+def events(args: list[str]) -> None:
+    """Print events as JSON lines: everything new since the last call, or `history N`."""
+    run_file = LIVE / "run.txt"
+    if not run_file.exists():
+        fail("no Run in progress", 1)
+    run = BASE / run_file.read_text().strip()
+    log = run / "events.jsonl"
+    text = log.read_text() if log.exists() else ""
+    lines = text[: text.rfind("\n") + 1].splitlines()  # skip a line the mod is still writing
+    if not args:
+        cursor = run / "events.cursor"  # how many events the Agent has already read
+        seen = int(cursor.read_text()) if cursor.exists() else 0
+        shown = lines[seen:]
+        cursor.write_text(str(len(lines)))
+    elif len(args) == 2 and args[0] == "history" and args[1].isdigit():
+        shown = lines[-int(args[1]) :] if int(args[1]) else []
+    else:
+        fail("usage: ftl events [history N]", 1)
+        return
+    for line in shown:
+        print(line)
+
+
 def main(args: list[str]) -> None:
     if not args:
         fail(USAGE, 1)
     require_game()
     if args == ["state"]:
         sys.stdout.write((LIVE / "state.json").read_text())
+        return
+    if args[0] == "events":
+        events(args[1:])
         return
     status, detail = send(" ".join(args))
     if status != "ok":
