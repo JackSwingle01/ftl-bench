@@ -54,7 +54,17 @@ end
 local SENSORS = 7
 local BEAM_TYPE = 2 -- WeaponBlueprint.type
 local KEY_1 = 49 -- SDLK_1: FTL's weapon1 and first-choice hotkey
-local KEY_AUTOFIRE = 118 -- SDLK_v: FTL's default autofire hotkey (settings.ini)
+---The player's autofire hotkey from FTL's settings.ini (default v), so a custom keymap still works.
+---@return integer
+local function autofire_key()
+    local f = io.open("settings.ini", "r")
+    local key = f and f:read("a"):match("\nautofire=(%d+)")
+    if f then
+        f:close()
+    end
+    return tonumber(key) or 118
+end
+local KEY_AUTOFIRE = autofire_key()
 
 ---@param n number
 ---@return integer
@@ -189,7 +199,6 @@ local function read_armaments(ship)
             charge = w.cooldown.first,
             charge_time = w.cooldown.second,
             missiles = w.blueprint.missiles > 0,
-            targets_needed = int(w:NumTargetsRequired()),
             beam = int(w.blueprint.type) == BEAM_TYPE,
             aimed = w.targets:size() > 0,
         }
@@ -498,6 +507,7 @@ local function execute(cmd)
     elseif cmd.kind == "untarget" then
         local w = weapon_objects[cmd.slot + 1]
         w.targets:clear()
+        w.lastTargets:clear() -- autofire re-aims from these
         w.targetId, w.fireWhenReady = -1, false
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
@@ -585,7 +595,7 @@ local function handle_inbox(raw)
 end
 
 -- Combat hooks: collected as the game runs, handed to Visibility once per frame.
-local hooks, pending_areas, shielded = {}, {}, {}
+local hooks, pending_areas, shielded, beam_room = {}, {}, {}, {}
 
 ---@return table[]
 local function take_hooks()
@@ -594,6 +604,16 @@ local function take_hooks()
     end
     local out = hooks
     hooks, pending_areas = {}, {}
+    local beam_hit = false
+    for _, h in ipairs(out) do
+        beam_hit = beam_hit or h.kind == "hit"
+    end
+    if not beam_hit then
+        beam_room = {} -- the next beam starts a new sweep
+    end
+    if not Hyperspace.ships.enemy then
+        shielded = {} -- no fight, nothing in flight
+    end
     return out
 end
 
@@ -602,9 +622,12 @@ end
 ---@param weapon any ProjectileFactory
 ---@return integer
 local function weapon_slot(ship, weapon)
+    -- SWIG prints a userdata with its native address, so equal strings mean the same weapon
+    -- (names alone would confuse two weapons of the same type).
+    local id = tostring(weapon)
     local list = ship:GetWeaponList()
     for i = 0, list:size() - 1 do
-        if list[i].name == weapon.name then
+        if tostring(list[i]) == id then
             return i
         end
     end
@@ -622,9 +645,10 @@ end
 
 ---@param ship any ShipManager
 ---@param location any Pointf
----@return integer
+---@return integer? room nil outside any room
 local function room_at(ship, location)
-    return int(ship.ship:GetSelectedRoomId(int(location.x), int(location.y), true))
+    local room = int(ship.ship:GetSelectedRoomId(int(location.x), int(location.y), true))
+    return room >= 0 and room or nil -- -1 outside any room
 end
 
 -- Hyperspace requires each callback to declare the hook's exact parameters (no `...`), and hooks
@@ -672,13 +696,12 @@ script.on_internal_event(
     events.DAMAGE_BEAM,
     function(ship, _projectile, location, damage, newTile, beamHit)
         guarded(function()
-            if newTile then
-                hooks[#hooks + 1] = {
-                    kind = "hit",
-                    ship = int(ship.iShipId),
-                    room = room_at(ship, location),
-                    damage = int(damage.iDamage),
-                }
+            -- A beam reports every tile it crosses; report each room once as it sweeps through.
+            local id, room = int(ship.iShipId), room_at(ship, location)
+            if newTile and room ~= beam_room[id] then
+                beam_room[id] = room
+                hooks[#hooks + 1] =
+                    { kind = "hit", ship = id, room = room, damage = int(damage.iDamage) }
             end
         end)
         return CONTINUE, beamHit

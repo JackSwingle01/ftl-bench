@@ -1082,3 +1082,9 @@ t.test("weapons show whether they are aimed, and the state shows autofire", func
         { true, nil, true }
     )
 end)
+
+t.test("a hit outside any room names no room", function()
+    t.eq(hooks(raw_with_enemy(), { { kind = "hit", ship = 1, damage = 1 } }), {
+        { type = "hit", target = "enemy", damage = 1 },
+    })
+end)

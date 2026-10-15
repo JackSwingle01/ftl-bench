@@ -58,7 +58,6 @@ FtlBench = FtlBench or {}
 ---@field charge number   seconds charged
 ---@field charge_time number
 ---@field missiles boolean
----@field targets_needed integer?  target points the game needs before it fires (one per shot; 2 for a beam)
 ---@field beam boolean?
 ---@field aimed boolean?
 
@@ -602,8 +601,6 @@ local function enemy_events(prev, raw, events)
     end
 end
 
----Events a human would notice, found by comparing this frame with the previous one.
--- ponytail: a load that lands straight on the game-over screen has no previous frame, so no event.
 ---Combat seen as it happens: shots, hits, shield blocks and misses (game hooks this frame).
 ---@param raw RawState
 ---@param hooks table[]
@@ -632,7 +629,7 @@ local function hook_events(raw, hooks, events)
             events[#events + 1] = {
                 type = "hit",
                 target = target[h.ship],
-                room = room(h.ship, h.room),
+                room = h.room and room(h.ship, h.room), -- nil when the shot landed outside any room
                 damage = h.damage,
             }
         elseif h.kind == "shield" then
@@ -643,6 +640,8 @@ local function hook_events(raw, hooks, events)
     end
 end
 
+---Events a human would notice, found by comparing this frame with the previous one.
+-- ponytail: a load that lands straight on the game-over screen has no previous frame, so no event.
 ---@param prev RawState?
 ---@param raw RawState
 ---@param hooks table[]?

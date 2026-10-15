@@ -296,6 +296,8 @@ local function plan_target(args, raw)
     end
     if w.beam and #rooms ~= 2 then
         return nil, label .. " is a beam: give a start and an end room"
+    elseif w.beam and rooms[1] == rooms[2] then
+        return nil, label .. " needs a start and an end room that differ"
     elseif not w.beam and #rooms ~= 1 then
         return nil, label .. " takes a single room"
     end

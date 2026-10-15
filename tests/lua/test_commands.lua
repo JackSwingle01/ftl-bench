@@ -521,19 +521,11 @@ local function raw_in_fight()
         missiles = false,
         beam = true,
     }
-    raw.player.weapons[2].targets_needed = 3 -- a burst laser wants one point per shot
     raw.enemy = raw_with_interior().player --[[@as RawEnemy]] -- an enemy with rooms 0-2
     return raw
 end
 
 t.test("a burst weapon aims every shot at the one room given", function()
-    t.eq(
-        C.plan("target weapon:1 enemy:room:2", raw_in_fight()),
-        { kind = "target", slot = 1, rooms = { 2 } }
-    )
-end)
-
-t.test("target aims a powered weapon at an enemy room", function()
     t.eq(
         C.plan("target weapon:1 enemy:room:2", raw_in_fight()),
         { kind = "target", slot = 1, rooms = { 2 } }
@@ -574,4 +566,11 @@ t.test("untarget and autofire", function()
     t.eq(C.plan("untarget weapon:1", raw), { kind = "untarget", slot = 1 })
     t.eq(C.plan("autofire on", raw), { kind = "autofire", on = true })
     t.eq(select(2, C.plan("autofire maybe", raw)), "usage: autofire on|off")
+end)
+
+t.test("a beam needs two different rooms", function()
+    t.eq(
+        select(2, C.plan("target weapon:3 enemy:room:2 enemy:room:2", raw_in_fight())),
+        "weapon:3 (Halberd Beam) needs a start and an end room that differ"
+    )
 end)
