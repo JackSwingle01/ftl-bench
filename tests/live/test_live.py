@@ -450,20 +450,18 @@ def wait_until_jump_ready(limit: float = 90) -> dict[str, Any]:
 
 
 def find_enemy() -> dict[str, Any] | None:
-    """Jump (answering events) until an enemy ship is present; None if none turns up."""
-    for _ in range(8):
+    """An enemy ship to test against: spawn a pirate fight here with the dev fixture."""
+    answer_events()
+    enemy = state().get("enemy")
+    if enemy and not enemy.get("destroyed"):
+        return enemy
+    spawn_event("PIRATE")
+    for _ in range(20):
         answer_events()
         enemy = state().get("enemy")
         if enemy:
             return enemy
-        jumps = wait_until_jump_ready()
-        if not jumps["ready"] or ftl("jump", pick_jump(jumps)).returncode != 0:
-            return None
-        ftl("unpause")
-        for _ in range(100):
-            time.sleep(0.1)
-            if state().get("event") or state().get("enemy"):
-                break
+        time.sleep(0.25)
     return None
 
 
@@ -477,7 +475,7 @@ class LiveEnemyTest(unittest.TestCase):
         LiveGameTest.setUpClass()
         enemy = find_enemy()
         if not enemy:
-            raise unittest.SkipTest("no enemy ship found within 8 jumps")
+            raise unittest.SkipTest("the PIRATE event made no enemy ship")
         cls.enemy = enemy
 
     def tearDown(self) -> None:
@@ -534,7 +532,7 @@ class LiveCombatTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         LiveGameTest.setUpClass()
         if not find_enemy():
-            raise unittest.SkipTest("no enemy ship found within 8 jumps")
+            raise unittest.SkipTest("the PIRATE event made no enemy ship")
 
     def tearDown(self) -> None:
         ftl("pause")
@@ -592,6 +590,13 @@ def give_scrap(amount: int) -> None:
     raise AssertionError("the dev probe did not give scrap (is it installed? scripts/dev-run)")
 
 
+def spawn_event(name: str) -> None:
+    """Dev-probe fixture: load a named game event at this beacon (STORE, PIRATE, ...)."""
+    answer_events()
+    (runs_dir().parent / "dev_give").write_text(f"event {name}\n")
+    time.sleep(1)
+
+
 class LiveUpgradeTest(unittest.TestCase):
     """#12: upgrades with scrap from the dev fixture."""
 
@@ -646,8 +651,10 @@ class LiveStoreTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         LiveGameTest.setUpClass()
-        if not find_store():
-            raise unittest.SkipTest("no store found within 12 jumps")
+        spawn_event("STORE")
+        answer_events()  # the store event's window, then the store window closes
+        if ftl("store").returncode != 0:
+            raise unittest.SkipTest("the STORE event made no store here")
 
     def test_buy_the_cheapest_item(self) -> None:
         give_scrap(100)
