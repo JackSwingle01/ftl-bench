@@ -1,3 +1,4 @@
-<mod:findLike type="scripts">
+<mod:findLike type="scripts" reverse="true" limit="1">
     <mod-append:script>data/ftlbench_probe.lua</mod-append:script>
+    <mod-append:script>data/ftlbench_autostart.lua</mod-append:script>
 </mod:findLike>

@@ -215,3 +215,39 @@ t.test("lists stay lists when empty, so they encode as JSON arrays", function()
     local mt = getmetatable(ship_view(raw).crew)
     t.eq(mt and mt.__jsontype, "array")
 end)
+
+-- #9: game over, victory, sector and Score.
+t.test("the current sector is always shown", function()
+    local raw = raw_in_run()
+    raw.sector = 3
+    t.eq(V.observe(nil, raw, {}).views.state.sector, 3)
+end)
+
+t.test("the Score is hidden until the Run ends", function()
+    local raw = raw_in_run()
+    raw.score = 512
+    local state = V.observe(nil, raw, {}).views.state
+    t.eq({ state.game_over, state.score }, { nil, nil })
+end)
+
+t.test("a finished Run shows game over, victory and the Score", function()
+    local raw = raw_in_run()
+    raw.sector, raw.score, raw.game_over, raw.victory = 8, 2650, true, true
+    local state = V.observe(nil, raw, {}).views.state
+    t.eq({ state.game_over, state.victory, state.score }, { true, true, 2650 })
+end)
+
+t.test("the frame the Run ends produces one game_over event", function()
+    local before, after = raw_in_run(), raw_in_run()
+    after.game_over, after.victory, after.score, after.sector = true, false, 300, 2
+    t.eq(V.observe(before, after, {}).events, {
+        { type = "game_over", victory = false, score = 300, sector = 2 },
+    })
+    t.eq(#V.observe(after, after, {}).events, 0)
+end)
+
+t.test("a lost Run shows victory as false, not missing", function()
+    local raw = raw_in_run()
+    raw.sector, raw.score, raw.game_over, raw.victory = 2, 300, true, false
+    t.eq(V.observe(nil, raw, {}).views.state.victory, false)
+end)

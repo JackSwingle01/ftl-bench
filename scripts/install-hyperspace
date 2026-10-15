@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Install our Hyperspace fork's macOS library into the sandbox game copy. Close FTL first.
+# Usage: scripts/install-hyperspace [run-id]   (default: latest successful Build macOS run on llm-io)
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO=JackSwingle01/FTL-Hyperspace
+RUN="${1:-$(gh run list -R "$REPO" --workflow build-macos.yml --branch llm-io --status success \
+    --limit 1 --json databaseId -q '.[0].databaseId')}"
+DIR="$ROOT/downloads/hyperspace-fork-$RUN"
+rm -rf "$DIR" && mkdir -p "$DIR"
+gh run download "$RUN" -R "$REPO" -n hyperspace-macos-binaries -D "$DIR"
+LIB="$(find "$DIR" -path '*1.6.13*' -name 'Hyperspace.1.6.13.amd64.dylib' | grep -iv debug | head -1)"
+[[ -n "$LIB" ]] || { echo "no release 1.6.13 dylib in run $RUN" >&2; find "$DIR" -name '*.dylib' >&2; exit 1; }
+APP="$ROOT/game/FTL.app"
+cp "$LIB" "$APP/Contents/MacOS/Hyperspace.1.6.13.amd64.dylib"
+xattr -cr "$APP"
+codesign -f -s - --timestamp=none --all-architectures --deep "$APP"
+echo "installed $LIB (run $RUN)"

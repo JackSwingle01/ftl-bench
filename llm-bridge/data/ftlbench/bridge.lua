@@ -8,6 +8,10 @@
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
 --   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run
+--   ftlbench/runs/<stamp>/events.jsonl    Visible events for that Run
+--   ftlbench/runs/<stamp>/score.json      final Score record, written at game over
+--
+-- Needs our Hyperspace fork (game-over and score fields); see docs/hyperspace-fork.md.
 
 local Json, Visibility, Commands = FtlBench.Json, FtlBench.Visibility, FtlBench.Commands
 
@@ -155,6 +159,10 @@ local function read_raw()
         local sensors = ship:GetSystem(SENSORS)
         local doors
         raw.nebula = app.world.space.bNebula
+        raw.sector = int(app.world.starMap.worldLevel) + 1
+        raw.game_over = gui.gameover
+        raw.victory = gui.gameOverScreen.bVictory
+        raw.score = int(Hyperspace.Score.currentScore.score)
         raw.player = {
             hull = int(ship.ship.hullIntegrity.first),
             hull_max = int(ship.ship.hullIntegrity.second),
@@ -242,6 +250,24 @@ local function tick()
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
+    if run_dir then
+        for _, event in ipairs(out.events) do
+            event.frame, event.game_time, event.wall = raw.frame, raw.game_time, os.time()
+            append(run_dir .. "/events.jsonl", Json.encode(event) .. "\n")
+            if event.type == "game_over" then
+                write_atomic(
+                    run_dir .. "/score.json",
+                    Json.encode({
+                        score = event.score,
+                        sector = event.sector,
+                        victory = event.victory,
+                        frame = raw.frame,
+                        game_time = raw.game_time,
+                    })
+                )
+            end
+        end
+    end
     handle_inbox(raw)
     prev = raw
 end

@@ -53,6 +53,10 @@ FtlBench = FtlBench or {}
 ---@field game_time number     unpaused game seconds since the Run started
 ---@field pause RawPause
 ---@field nebula boolean?
+---@field sector integer?     1-8, shown on the HUD
+---@field game_over boolean?
+---@field victory boolean?
+---@field score integer?      FTL's running Score; the game only shows it when the Run ends
 ---@field player RawShip?
 
 ---@class Observation
@@ -211,19 +215,36 @@ local function observe_ship(raw, ship)
     return view
 end
 
+---Visible events found by comparing this frame with the previous one.
+---@param prev RawState?
+---@param raw RawState
+---@return table[]
+local function observe_events(prev, raw)
+    local events = {}
+    if prev and raw.game_over and not prev.game_over then
+        events[#events + 1] = {
+            type = "game_over",
+            victory = raw.victory == true,
+            score = raw.score,
+            sector = raw.sector,
+        }
+    end
+    return events
+end
+
 ---Build the Observation and the new Visible events.
----@param _prev RawState? raw state from the previous frame (nil on the first frame)
+---@param prev RawState? raw state from the previous frame (nil on the first frame)
 ---@param raw RawState
 ---@param _hooks table[] game-hook occurrences since the previous frame
 ---@return Observation
-function Visibility.observe(_prev, raw, _hooks)
+function Visibility.observe(prev, raw, _hooks)
     if not raw.in_run then
         return {
             views = { state = { in_run = false, paused = false, frame = 0, game_time = 0 } },
             events = {},
         }
     end
-    return {
+    local out = {
         views = {
             state = {
                 in_run = true,
@@ -231,10 +252,16 @@ function Visibility.observe(_prev, raw, _hooks)
                 frame = raw.frame,
                 game_time = raw.game_time,
                 ship = raw.player and observe_ship(raw, raw.player),
+                sector = raw.sector,
             },
         },
-        events = {},
+        events = setmetatable(observe_events(prev, raw), LIST),
     }
+    if raw.game_over then
+        local state = out.views.state
+        state.game_over, state.victory, state.score = true, raw.victory == true, raw.score
+    end
+    return out
 end
 
 FtlBench.Visibility = Visibility

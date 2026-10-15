@@ -153,5 +153,39 @@ class LiveShipTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr.strip()), (1, "no crew:999"))
 
 
+@unittest.skipUnless(
+    os.environ.get("FTL_LIVE_DESTRUCTIVE"), "ends the Run; set FTL_LIVE_DESTRUCTIVE=1"
+)
+class LiveGameOverTest(unittest.TestCase):
+    """#9: lose the Run on purpose (vent every room) and check the game-over record."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+
+    def test_losing_writes_game_over_state_event_and_score(self) -> None:
+        default = Path.home() / "Library/Application Support/FasterThanLight/ftlbench"
+        runs = Path(os.environ.get("FTL_BENCH_DIR", default)) / "runs"
+        run_dir = max(runs.iterdir(), key=lambda p: p.stat().st_mtime)
+        self.assertEqual(ftl("door", "all", "open").returncode, 0)
+        ftl("unpause")
+        s = state()
+        for _ in range(600):  # crew suffocate in a couple of minutes
+            s = state()
+            if s.get("game_over"):
+                break
+            time.sleep(1)
+        self.assertEqual(s.get("game_over"), True)
+        self.assertEqual(s["victory"], False)
+        self.assertIsInstance(s["score"], int)
+        events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+        self.assertEqual(events[-1]["type"], "game_over")
+        record = json.loads((run_dir / "score.json").read_text())
+        self.assertEqual(
+            (record["victory"], record["score"], record["sector"]),
+            (False, s["score"], s["sector"]),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
