@@ -10,6 +10,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import NoReturn
 
 BASE = Path(
     os.environ.get(
@@ -23,7 +24,7 @@ ANSWER_TIMEOUT = 3.0  # seconds to wait for the mod to answer a Command
 USAGE = "usage: ftl state | ftl events [history N] | ftl <command> [args...]   e.g. ftl pause"
 
 
-def fail(message: str, code: int) -> None:
+def fail(message: str, code: int) -> NoReturn:
     print(message, file=sys.stderr)
     sys.exit(code)
 
@@ -59,7 +60,6 @@ def send(text: str) -> tuple[str, str]:
                     return status, detail
         time.sleep(0.01)
     fail(f"game not responding (the mod did not answer within {ANSWER_TIMEOUT:.0f}s)", 2)
-    raise AssertionError("unreachable")
 
 
 def events(args: list[str]) -> None:
@@ -75,12 +75,13 @@ def events(args: list[str]) -> None:
         cursor = run / "events.cursor"  # how many events the Agent has already read
         seen = int(cursor.read_text()) if cursor.exists() else 0
         shown = lines[seen:]
-        cursor.write_text(str(len(lines)))
+        tmp = cursor.with_suffix(".tmp")
+        tmp.write_text(str(len(lines)))
+        tmp.replace(cursor)  # atomic, so a crash never leaves a half-written read position
     elif len(args) == 2 and args[0] == "history" and args[1].isdigit():
         shown = lines[-int(args[1]) :] if int(args[1]) else []
     else:
         fail("usage: ftl events [history N]", 1)
-        return
     for line in shown:
         print(line)
 

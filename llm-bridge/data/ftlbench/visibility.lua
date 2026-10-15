@@ -185,6 +185,27 @@ local function lit_rooms(raw, ship)
     return lit
 end
 
+---Fire icons show above systems even in a dark room.
+---@param r RawRoom
+---@param visible boolean room is lit
+---@return boolean
+local function fire_visible(r, visible)
+    return visible or r.system ~= nil
+end
+
+---@param r RawRoom
+---@return string
+local function room_label(r)
+    local name = r.system and SYSTEM_NAMES[r.system + 1]
+    return "room:" .. r.id .. (name and (" (" .. name .. ")") or "")
+end
+
+---@param c RawCrew
+---@return string
+local function crew_label(c)
+    return ("crew:%d (%s)"):format(c.uid, c.name)
+end
+
 ---@param r RawRoom
 ---@param visible boolean
 local function observe_room(r, visible)
@@ -200,8 +221,8 @@ local function observe_room(r, visible)
         room.oxygen, room.fires, room.breaches = round(r.oxygen), r.fires, r.breaches
     else
         room.hidden = DARK
-        if r.system then
-            room.fires = r.fires -- fire icons show above systems even in the dark
+        if fire_visible(r, false) then
+            room.fires = r.fires
         end
     end
     return room
@@ -317,13 +338,6 @@ local function run_result(raw)
     return { victory = raw.victory == true, score = raw.score, sector = raw.sector }
 end
 
----@param r RawRoom
----@return string
-local function room_label(r)
-    local name = r.system and SYSTEM_NAMES[r.system + 1]
-    return "room:" .. r.id .. (name and (" (" .. name .. ")") or "")
-end
-
 ---@param list table[]?
 ---@param key string
 ---@return table<any, table>
@@ -354,7 +368,7 @@ local function room_events(raw, before, after, events)
         local was, visible = old[r.id], lit == nil or lit[r.id] == true
         if was then
             local label = room_label(r)
-            if visible or r.system then -- fire icons show above systems even in the dark
+            if fire_visible(r, visible) then
                 if was.fires == 0 and r.fires > 0 then
                     events[#events + 1] = { type = "fire_started", room = label, fires = r.fires }
                 elseif was.fires > 0 and r.fires == 0 then
@@ -380,7 +394,7 @@ local function crew_events(before, after, events)
     for _, c in ipairs(after.crew or {}) do
         local was = old[c.uid]
         if was and not was.dead then
-            local label = ("crew:%d (%s)"):format(c.uid, c.name)
+            local label = crew_label(c)
             if c.dead then
                 events[#events + 1] = { type = "crew_killed", crew = label }
             elseif health_band(c) < health_band(was) then
