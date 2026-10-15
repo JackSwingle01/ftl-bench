@@ -53,3 +53,101 @@ end)
 t.test("extra whitespace is tolerated", function()
     t.eq(C.plan("  wait   3 ", raw_in_run()), { kind = "wait", seconds = 3 })
 end)
+
+-- #3: move and door. Ship: rooms 0-2, interior doors 0-1, airlock door 2.
+-- Crew: Maria (uid 101) in room 0, Sam (uid 102) aboard the enemy ship.
+local function raw_with_interior()
+    local raw = raw_in_run()
+    raw.player.rooms = {
+        { id = 0, x = 0, y = 0, w = 35, h = 35, oxygen = 100, fires = 0, breaches = 0 },
+        { id = 1, x = 35, y = 0, w = 35, h = 35, oxygen = 100, fires = 0, breaches = 0 },
+        { id = 2, x = 70, y = 0, w = 35, h = 35, oxygen = 100, fires = 0, breaches = 0 },
+    }
+    raw.player.doors = {
+        { id = 0, room1 = 0, room2 = 1, open = false },
+        { id = 1, room1 = 1, room2 = 2, open = false },
+        { id = 2, room1 = 2, room2 = -1, open = false },
+    }
+    local skills = { 1, 1, 1, 1, 1, 1 }
+    raw.player.crew = {
+        {
+            uid = 101,
+            name = "Maria",
+            species = "human",
+            health = 100,
+            health_max = 100,
+            room = 0,
+            on_enemy_ship = false,
+            skills = skills,
+        },
+        {
+            uid = 102,
+            name = "Sam",
+            species = "human",
+            health = 100,
+            health_max = 100,
+            room = 4,
+            on_enemy_ship = true,
+            skills = skills,
+        },
+    }
+    return raw
+end
+
+t.test("move resolves a crew member and a room on our ship", function()
+    t.eq(
+        C.plan("move crew:101 room:2", raw_with_interior()),
+        { kind = "move", crew = 101, room = 2, enemy = false }
+    )
+end)
+
+t.test("move sends crew aboard the enemy ship to enemy rooms", function()
+    t.eq(
+        C.plan("move crew:102 enemy:room:1", raw_with_interior()),
+        { kind = "move", crew = 102, room = 1, enemy = true }
+    )
+end)
+
+t.test("move rejects unknown crew, unknown rooms and the wrong ship", function()
+    local raw = raw_with_interior()
+    t.eq(select(2, C.plan("move crew:999 room:1", raw)), "no crew:999")
+    t.eq(select(2, C.plan("move crew:101 room:9", raw)), "no room:9")
+    t.eq(
+        select(2, C.plan("move crew:101 enemy:room:1", raw)),
+        "crew:101 (Maria) is on our ship; use a room:N"
+    )
+    t.eq(
+        select(2, C.plan("move crew:102 room:1", raw)),
+        "crew:102 (Sam) is on the enemy ship; use an enemy:room:N"
+    )
+end)
+
+t.test("move explains malformed IDs", function()
+    local raw = raw_with_interior()
+    t.eq(select(2, C.plan("move Maria room:1", raw)), "expected a crew ID like crew:101, got Maria")
+    t.eq(
+        select(2, C.plan("move crew:101 engines", raw)),
+        "expected a room ID like room:4, got engines"
+    )
+    t.eq(select(2, C.plan("move crew:101", raw)), "usage: move <crew> <room>")
+end)
+
+t.test("door opens or closes one door, including airlocks", function()
+    local raw = raw_with_interior()
+    t.eq(C.plan("door door:1 open", raw), { kind = "door", doors = { 1 }, open = true })
+    t.eq(C.plan("door door:2 close", raw), { kind = "door", doors = { 2 }, open = false })
+end)
+
+t.test("door all affects every door", function()
+    t.eq(
+        C.plan("door all open", raw_with_interior()),
+        { kind = "door", doors = { 0, 1, 2 }, open = true }
+    )
+end)
+
+t.test("door rejects unknown doors and bad states", function()
+    local raw = raw_with_interior()
+    t.eq(select(2, C.plan("door door:7 open", raw)), "no door:7")
+    t.eq(select(2, C.plan("door door:1 ajar", raw)), "usage: door <door|all> open|close")
+    t.eq(select(2, C.plan("door 1 open", raw)), "expected a door ID like door:3 or all, got 1")
+end)

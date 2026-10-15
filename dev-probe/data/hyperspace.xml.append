@@ -1,0 +1,3 @@
+<mod:findLike type="scripts">
+    <mod-append:script>data/ftlbench_probe.lua</mod-append:script>
+</mod:findLike>

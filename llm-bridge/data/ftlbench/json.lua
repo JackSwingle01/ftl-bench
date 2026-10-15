@@ -1,5 +1,6 @@
 -- Minimal JSON encoder (Hyperspace's Lua has no JSON library).
--- Tables with keys 1..n are arrays; any other table, including an empty one, is an object.
+-- Tables with keys 1..n, or with metatable field __jsontype = "array", are arrays;
+-- any other table, including an empty one, is an object.
 
 FtlBench = FtlBench or {}
 
@@ -20,6 +21,10 @@ end
 ---@param t table
 ---@return boolean
 local function is_array(t)
+    local mt = getmetatable(t)
+    if mt and mt.__jsontype == "array" then
+        return true
+    end
     local n = #t
     if n == 0 then
         return false

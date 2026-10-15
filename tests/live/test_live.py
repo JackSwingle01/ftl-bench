@@ -86,5 +86,72 @@ class LiveGameTest(unittest.TestCase):
         self.assertIn("frame", last)
 
 
+class LiveShipTest(unittest.TestCase):
+    """#3: own ship layout, crew and doors.
+
+    Assumes the Kestrel A: 17 rooms, 20 interior doors and 6 airlocks.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        LiveGameTest.setUpClass()
+
+    def tearDown(self) -> None:
+        ftl("door", "all", "close")
+        ftl("pause")
+
+    def test_kestrel_layout(self) -> None:
+        ship = state()["ship"]
+        self.assertEqual(len(ship["rooms"]), 17)
+        self.assertEqual(len(ship["doors"]), 26)
+        airlocks = [d for d in ship["doors"] if "space" in d["rooms"]]
+        self.assertEqual(len(airlocks), 6)
+        names = {r.get("name") for r in ship["rooms"]}
+        for system in ("piloting", "engines", "shields", "weapons", "oxygen", "medbay", "sensors"):
+            self.assertIn(system, names)
+        self.assertEqual(ship["rooms"][0]["id"], "room:0")
+
+    def test_crew_have_stable_ids_and_names(self) -> None:
+        crew = state()["ship"]["crew"]
+        self.assertGreaterEqual(len(crew), 1)
+        for c in crew:
+            self.assertRegex(c["id"], r"^crew:\d+$")
+            self.assertTrue(c["name"])
+            self.assertRegex(c["room"], r"^(enemy:)?room:\d+$")
+            skills = {"piloting", "engines", "shields", "weapons", "repair", "combat"}
+            self.assertEqual(set(c["skills"]), skills)
+
+    def test_door_open_and_close(self) -> None:
+        self.assertEqual(ftl("door", "door:0", "open").returncode, 0)
+        time.sleep(0.1)
+        self.assertTrue(state()["ship"]["doors"][0]["open"])
+        self.assertEqual(ftl("door", "door:0", "close").returncode, 0)
+        time.sleep(0.1)
+        self.assertFalse(state()["ship"]["doors"][0]["open"])
+
+    def test_door_all_opens_airlocks_too(self) -> None:
+        self.assertEqual(ftl("door", "all", "open").returncode, 0)
+        time.sleep(0.1)
+        self.assertTrue(all(d["open"] for d in state()["ship"]["doors"]))
+
+    def test_move_crew_to_another_room(self) -> None:
+        ship = state()["ship"]
+        mover = ship["crew"][0]
+        target = next(r["id"] for r in ship["rooms"] if r["id"] != mover["room"])
+        self.assertEqual(ftl("move", mover["id"], target).returncode, 0)
+        ftl("unpause")
+        now = mover
+        for _ in range(100):
+            time.sleep(0.1)
+            now = next(c for c in state()["ship"]["crew"] if c["id"] == mover["id"])
+            if now["room"] == target:
+                break
+        self.assertEqual(now["room"], target)
+
+    def test_move_errors(self) -> None:
+        r = ftl("move", "crew:999", "room:1")
+        self.assertEqual((r.returncode, r.stderr.strip()), (1, "no crew:999"))
+
+
 if __name__ == "__main__":
     unittest.main()

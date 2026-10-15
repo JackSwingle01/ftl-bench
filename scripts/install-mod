@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Patch Hyperspace + our mod into the sandbox game copy. Close FTL first.
+# --dev also installs dev-probe (dumps raw state; never use for scored Runs).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GAME="$ROOT/game"
-"$GAME/ftlman/ftlman" patch -d "$GAME/FTL.app/Contents/Resources" \
-    "$GAME/ftlman/mods/Hyperspace.ftl" "$ROOT/llm-bridge"
+MODS=("$GAME/ftlman/mods/Hyperspace.ftl" "$ROOT/llm-bridge")
+[[ "${1:-}" == "--dev" ]] && MODS+=("$ROOT/dev-probe")
+"$GAME/ftlman/ftlman" patch -d "$GAME/FTL.app/Contents/Resources" "${MODS[@]}"

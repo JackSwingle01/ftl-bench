@@ -13,14 +13,9 @@ local function raw_in_run()
 end
 
 t.test("state view shows pause status, game time, hull and scrap", function()
-    local out = V.observe(nil, raw_in_run(), {})
-    t.eq(out.views.state, {
-        in_run = true,
-        paused = false,
-        frame = 1200,
-        game_time = 20.5,
-        ship = { hull = 27, hull_max = 30, scrap = 45 },
-    })
+    local state = V.observe(nil, raw_in_run(), {}).views.state
+    t.eq({ state.in_run, state.paused, state.frame, state.game_time }, { true, false, 1200, 20.5 })
+    t.eq({ state.ship.hull, state.ship.hull_max, state.ship.scrap }, { 27, 30, 45 })
 end)
 
 t.test("outside a Run the state view says so and shows no ship", function()
@@ -43,4 +38,173 @@ t.test("an open event or menu counts as paused", function()
     raw = raw_in_run()
     raw.pause.menu = true
     t.eq(V.observe(nil, raw, {}).views.state.paused, true)
+end)
+
+-- Own ship interior (#3). A small three-room ship:
+--   room 0: piloting, holds crew Maria   room 1: no system   room 2: shields
+--   door 0 joins rooms 0-1, door 1 joins rooms 1-2, door 2 is an airlock on room 1.
+---@return RawState
+local function raw_with_interior()
+    local raw = raw_in_run()
+    raw.nebula = false
+    local ship = raw.player --[[@as RawShip]]
+    ship.oxygen = 92
+    ship.sensors_power = 1
+    ship.rooms = {
+        {
+            id = 0,
+            x = 70,
+            y = 35,
+            w = 35,
+            h = 70,
+            system = 6,
+            oxygen = 100,
+            fires = 0,
+            breaches = 0,
+        },
+        { id = 1, x = 0, y = 35, w = 70, h = 70, oxygen = 80.4, fires = 1, breaches = 1 },
+        {
+            id = 2,
+            x = 0,
+            y = 105,
+            w = 70,
+            h = 35,
+            system = 0,
+            oxygen = 95,
+            fires = 2,
+            breaches = 0,
+        },
+    }
+    ship.doors = {
+        { id = 0, room1 = 0, room2 = 1, open = false },
+        { id = 1, room1 = 1, room2 = 2, open = true },
+        { id = 2, room1 = 1, room2 = -1, open = false },
+    }
+    ship.crew = {
+        {
+            uid = 101,
+            name = "Maria",
+            species = "human",
+            health = 85,
+            health_max = 100,
+            room = 0,
+            on_enemy_ship = false,
+            skills = { 2, 1, 1, 3, 1, 1 },
+        },
+    }
+    return raw
+end
+
+local function ship_view(raw)
+    return V.observe(nil, raw, {}).views.state.ship
+end
+
+t.test("rooms show tile position and size, and their system name", function()
+    local rooms = ship_view(raw_with_interior()).rooms
+    t.eq(rooms[1], {
+        id = "room:0",
+        name = "piloting",
+        x = 2,
+        y = 1,
+        w = 1,
+        h = 2,
+        oxygen = 100,
+        fires = 0,
+        breaches = 0,
+    })
+    t.eq(rooms[3].name, "shields")
+    t.eq(rooms[2].name, nil)
+end)
+
+t.test("room oxygen is a whole percentage", function()
+    t.eq(ship_view(raw_with_interior()).rooms[2].oxygen, 80)
+end)
+
+t.test("doors list the rooms they join, with space for airlocks", function()
+    t.eq(ship_view(raw_with_interior()).doors, {
+        { id = "door:0", rooms = { "room:0", "room:1" }, open = false },
+        { id = "door:1", rooms = { "room:1", "room:2" }, open = true },
+        { id = "door:2", rooms = { "room:1", "space" }, open = false },
+    })
+end)
+
+t.test("own crew show ID, name, race, health, room and skills", function()
+    t.eq(ship_view(raw_with_interior()).crew, {
+        {
+            id = "crew:101",
+            name = "Maria",
+            race = "human",
+            health = 85,
+            health_max = 100,
+            room = "room:0",
+            skills = { piloting = 2, engines = 1, shields = 1, weapons = 3, repair = 1, combat = 1 },
+        },
+    })
+end)
+
+t.test("crew aboard the enemy ship are placed in an enemy room", function()
+    local raw = raw_with_interior()
+    raw.player.crew[1].on_enemy_ship = true
+    raw.player.crew[1].room = 3
+    t.eq(ship_view(raw).crew[1].room, "enemy:room:3")
+end)
+
+t.test("whole-ship oxygen is always shown", function()
+    local raw = raw_with_interior()
+    raw.player.sensors_power = 0
+    t.eq(ship_view(raw).oxygen, 92)
+end)
+
+t.test("without Sensors, rooms with no own crew hide oxygen and breaches", function()
+    local raw = raw_with_interior()
+    raw.player.sensors_power = 0
+    local rooms = ship_view(raw).rooms
+    t.eq(rooms[1].oxygen, 100) -- Maria is there
+    t.eq(rooms[2], {
+        id = "room:1",
+        x = 0,
+        y = 1,
+        w = 2,
+        h = 2,
+        hidden = "no crew in room and Sensors not working",
+    })
+end)
+
+t.test("without Sensors, fires still show in system rooms but not in empty ones", function()
+    local raw = raw_with_interior()
+    raw.player.sensors_power = 0
+    local rooms = ship_view(raw).rooms
+    t.eq(rooms[3].fires, 2)
+    t.eq(rooms[3].oxygen, nil)
+    t.eq(rooms[2].fires, nil)
+end)
+
+t.test("a nebula blinds Sensors even when powered", function()
+    local raw = raw_with_interior()
+    raw.nebula = true
+    t.eq(ship_view(raw).rooms[2].hidden, "no crew in room and Sensors not working")
+end)
+
+t.test("a Slug crew member reveals rooms joined to its room by a door", function()
+    local raw = raw_with_interior()
+    raw.player.sensors_power = 0
+    raw.player.crew[1].species = "slug"
+    local rooms = ship_view(raw).rooms
+    t.eq(rooms[2].oxygen, 80) -- joined to room 0 by door 0
+    t.eq(rooms[3].hidden, "no crew in room and Sensors not working") -- two doors away
+end)
+
+t.test("layout and door state stay visible without Sensors", function()
+    local raw = raw_with_interior()
+    raw.player.sensors_power = 0
+    local view = ship_view(raw)
+    t.eq(#view.doors, 3)
+    t.eq(view.doors[2].open, true)
+end)
+
+t.test("lists stay lists when empty, so they encode as JSON arrays", function()
+    local raw = raw_with_interior()
+    raw.player.crew = {}
+    local mt = getmetatable(ship_view(raw).crew)
+    t.eq(mt and mt.__jsontype, "array")
 end)

@@ -6,8 +6,8 @@ LUA="${LUA:-$(command -v lua5.3 || echo .tools/bin/lua)}"
 
 step() { printf '\n== %s\n' "$*"; }
 
-step "stylua";             stylua --check llm-bridge tests
-step "selene";             selene --quiet llm-bridge tests
+step "stylua";             stylua --check llm-bridge dev-probe tests
+step "selene";             selene --quiet llm-bridge dev-probe tests
 step "lua-language-server"
 out="$(lua-language-server --check . --checklevel=Warning 2>&1)"
 grep -q "no problems found" <<<"$out" || { echo "$out"; exit 1; }
