@@ -639,7 +639,7 @@ local handlers = {
     buy = plan_buy,
     upgrade = plan_upgrade,
     close = function(_, raw)
-        if not raw.pause.menu then
+        if not raw.window then
             return nil, "no window is open"
         end
         return { kind = "close" }

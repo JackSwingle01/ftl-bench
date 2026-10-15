@@ -630,7 +630,7 @@ end)
 t.test("close shuts an open window", function()
     t.eq(C.plan("close", raw_at_store()), { kind = "close" })
     local raw = raw_at_store()
-    raw.pause.menu = false
+    raw.window = nil
     t.eq(select(2, C.plan("close", raw)), "no window is open")
 end)
 

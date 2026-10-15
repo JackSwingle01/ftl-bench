@@ -345,6 +345,7 @@ end
 
 -- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
 local shown_window = nil
+local open_window = nil -- raw.window as of the last read (also a store the game opened itself)
 
 -- Enemy crew objects by uid, for mind control (filled by read_enemy).
 local enemy_crew_objects = {}
@@ -555,6 +556,7 @@ local function read_raw()
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
         raw.window = shown_window or (raw.store and raw.store.open and "store") or nil
+        open_window = raw.window
         raw.upgrades = read_upgrades(ship)
     end
     return raw
@@ -667,8 +669,8 @@ local function execute(cmd)
         button.bHover = false
         button:Accept()
     elseif cmd.kind == "close" then
-        -- Escape closes the store the way a player does, clearing the game's window pause too
-        -- (Store:Close() alone left it set). Commands only allows this while a store is open.
+        -- Escape closes the window the way a player does, clearing the game's window pause too
+        -- (Store:Close() alone left it set). Commands only allows this while a window is open.
         press(KEY_ESCAPE)
         shown_window = nil
     elseif cmd.kind == "cloak" or cmd.kind == "battery" then
@@ -705,8 +707,10 @@ local function execute(cmd)
     elseif cmd.kind == "show" then
         -- Open the window the Agent is reading, as a player would; only over the plain ship view.
         local gui = Hyperspace.App.gui
-        if shown_window and gui.menu_pause then
-            press(KEY_ESCAPE) -- swap our own window for the new one
+        if open_window == cmd.window then
+            return nil -- already showing it
+        elseif open_window and gui.menu_pause then
+            press(KEY_ESCAPE) -- swap the open window (ours or the game's store) for the new one
             shown_window = nil
         end
         if not (gui.menu_pause or gui.event_pause) then
@@ -774,6 +778,9 @@ local function handle_inbox(raw)
         local id, wall_ms, text = line:match("^([^\t]*)\t([^\t]*)\t(.*)$")
         if id then
             local cmd, err = Commands.plan(text, raw)
+            if cmd and cmd.kind == "close" then
+                raw.window, raw.pause.menu = nil, false -- later lines this tick see it shut
+            end
             if cmd then
                 local ok, result = pcall(execute, cmd)
                 -- Always answer, so the CLI never waits on a Command that broke mid-way.
@@ -782,6 +789,9 @@ local function handle_inbox(raw)
                 else
                     err = "internal error: " .. tostring(result)
                 end
+            end
+            if cmd and cmd.kind == "show" and not err and shown_window then
+                raw.window, raw.pause.menu = shown_window, true
             end
             local status = err and ("error\t" .. err)
                 or (cmd and cmd.seconds and ("ok\t" .. cmd.seconds))
