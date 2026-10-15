@@ -215,19 +215,23 @@ local function observe_ship(raw, ship)
     return view
 end
 
----Visible events found by comparing this frame with the previous one.
+---What a finished Run reports, in the state view and the game_over event alike.
+---@param raw RawState
+local function run_result(raw)
+    return { victory = raw.victory == true, score = raw.score, sector = raw.sector }
+end
+
+---Events a human would notice, found by comparing this frame with the previous one.
+-- ponytail: a load that lands straight on the game-over screen has no previous frame, so no event.
 ---@param prev RawState?
 ---@param raw RawState
 ---@return table[]
 local function observe_events(prev, raw)
     local events = {}
     if prev and raw.game_over and not prev.game_over then
-        events[#events + 1] = {
-            type = "game_over",
-            victory = raw.victory == true,
-            score = raw.score,
-            sector = raw.sector,
-        }
+        local event = run_result(raw)
+        event.type = "game_over"
+        events[#events + 1] = event
     end
     return events
 end
@@ -259,7 +263,8 @@ function Visibility.observe(prev, raw, _hooks)
     }
     if raw.game_over then
         local state = out.views.state
-        state.game_over, state.victory, state.score = true, raw.victory == true, raw.score
+        local result = run_result(raw)
+        state.game_over, state.victory, state.score = true, result.victory, result.score
     end
     return out
 end

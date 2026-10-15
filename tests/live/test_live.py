@@ -22,6 +22,15 @@ def ftl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def runs_dir() -> Path:
+    default = Path.home() / "Library/Application Support/FasterThanLight/ftlbench"
+    return Path(os.environ.get("FTL_BENCH_DIR", default)) / "runs"
+
+
+def newest_run() -> Path:
+    return max(runs_dir().iterdir(), key=lambda p: p.stat().st_mtime)
+
+
 def state() -> dict[str, Any]:
     r = ftl("state")
     assert r.returncode == 0, r.stderr
@@ -76,10 +85,7 @@ class LiveGameTest(unittest.TestCase):
         marker = "wait 0.1"
         start = time.time()
         self.assertEqual(ftl(*marker.split()).returncode, 0)
-        default = Path.home() / "Library/Application Support/FasterThanLight/ftlbench"
-        base = Path(os.environ.get("FTL_BENCH_DIR", default)) / "runs"
-        newest = max(base.iterdir(), key=lambda p: p.stat().st_mtime)
-        last = json.loads((newest / "actions.jsonl").read_text().splitlines()[-1])
+        last = json.loads((newest_run() / "actions.jsonl").read_text().splitlines()[-1])
         self.assertEqual(last["command"], marker)
         self.assertEqual(last["result"], "ok")
         self.assertGreaterEqual(last["wall_ms"], int(start * 1000) - 1)
@@ -164,11 +170,10 @@ class LiveGameOverTest(unittest.TestCase):
         LiveGameTest.setUpClass()
 
     def test_losing_writes_game_over_state_event_and_score(self) -> None:
-        default = Path.home() / "Library/Application Support/FasterThanLight/ftlbench"
-        runs = Path(os.environ.get("FTL_BENCH_DIR", default)) / "runs"
-        run_dir = max(runs.iterdir(), key=lambda p: p.stat().st_mtime)
+        run_dir = newest_run()
         self.assertEqual(ftl("door", "all", "open").returncode, 0)
-        ftl("unpause")
+        r = ftl("unpause")
+        self.assertEqual(r.returncode, 0, r.stderr)
         s = state()
         for _ in range(600):  # crew suffocate in a couple of minutes
             s = state()

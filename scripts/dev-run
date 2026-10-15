@@ -3,22 +3,24 @@
 # dev autostart press Continue (or New Game). Waits until a Run is live.
 # Usage: scripts/dev-run [continue|new]   ("new" moves any saved Run to hs_continue.sav.dev-bak)
 set -euo pipefail
+MODE="${1:-continue}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SAVE="$HOME/Library/Application Support/FasterThanLight"
 pkill -f "$ROOT/game/FTL.app" && sleep 2 || true
 "$ROOT/scripts/install-mod" --dev >/dev/null
 mkdir -p "$SAVE/ftlbench/live"
-echo "${1:-continue}" > "$SAVE/ftlbench/autostart"
+echo "$MODE" > "$SAVE/ftlbench/autostart"
 rm -f "$SAVE/ftlbench/live/state.json"
 # New Game over a saved Run opens a "this deletes your run" confirmation the autostart can't answer,
 # so set the saved Run aside. hs_continue.sav is Hyperspace's save (only this modded copy uses it);
 # move rather than delete anyway.
-if [[ "${1:-continue}" == "new" && -f "$SAVE/hs_continue.sav" ]]; then
+if [[ "$MODE" == "new" && -f "$SAVE/hs_continue.sav" ]]; then
     mv "$SAVE/hs_continue.sav" "$SAVE/hs_continue.sav.dev-bak"
 fi
 open "$ROOT/game/FTL.app"
 for _ in $(seq 1 120); do
     if "$ROOT/bin/ftl" state 2>/dev/null | grep -q '"in_run":true'; then
+        rm -f "$SAVE/ftlbench/autostart" # so a later manual launch doesn't auto-click
         echo "Run is live"
         exit 0
     fi

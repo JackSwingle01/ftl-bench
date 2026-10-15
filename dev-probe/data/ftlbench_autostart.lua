@@ -1,6 +1,6 @@
 -- DEVELOPMENT ONLY: presses main-menu buttons so scripts/dev-run needs no clicking.
 -- Reads ftlbench/autostart ("continue" or "new"), acts once per game launch. After "new" it
--- also answers the intro event so the Run starts unpaused-able.
+-- also answers the intro event, which would otherwise keep the game paused.
 -- Uses the in-game input bindings from our Hyperspace fork.
 
 local done, ticks, clicks = false, 0, 0
@@ -17,14 +17,19 @@ local function click(button)
     app:OnLButtonUp(x, y)
 end
 
-local function step()
+-- Read once at launch: scripts/dev-run deletes the file as soon as the Run is live.
+local mode
+do
     local f = io.open("ftlbench/autostart", "r")
-    if not f then
+    if f then
+        mode = f:read("l")
+        f:close()
+    else
         done = true
-        return
     end
-    local mode = f:read("l")
-    f:close()
+end
+
+local function step()
     local app = Hyperspace.App
     local menu = app.menu
     if not menu.bOpen then

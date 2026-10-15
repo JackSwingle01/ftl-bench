@@ -8,8 +8,8 @@
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
 --   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run
---   ftlbench/runs/<stamp>/events.jsonl    Visible events for that Run
---   ftlbench/runs/<stamp>/score.json      final Score record, written at game over
+--   ftlbench/runs/<stamp>/events.jsonl    events for that Run (already filtered by Visibility)
+--   ftlbench/runs/<stamp>/score.json      Score record, rewritten every game-over frame so it ends final
 --
 -- Needs our Hyperspace fork (game-over and score fields); see docs/hyperspace-fork.md.
 
@@ -161,7 +161,8 @@ local function read_raw()
         raw.nebula = app.world.space.bNebula
         raw.sector = int(app.world.starMap.worldLevel) + 1
         raw.game_over = gui.gameover
-        raw.victory = gui.gameOverScreen.bVictory
+        -- alreadyWon is set the moment the Flagship dies; bVictory once the end screen opens.
+        raw.victory = gui.alreadyWon or gui.gameOverScreen.bVictory
         raw.score = int(Hyperspace.Score.currentScore.score)
         raw.player = {
             hull = int(ship.ship.hullIntegrity.first),
@@ -252,20 +253,21 @@ local function tick()
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
     if run_dir then
         for _, event in ipairs(out.events) do
-            event.frame, event.game_time, event.wall = raw.frame, raw.game_time, os.time()
+            event.frame, event.game_time, event.wall_s = raw.frame, raw.game_time, os.time()
             append(run_dir .. "/events.jsonl", Json.encode(event) .. "\n")
-            if event.type == "game_over" then
-                write_atomic(
-                    run_dir .. "/score.json",
-                    Json.encode({
-                        score = event.score,
-                        sector = event.sector,
-                        victory = event.victory,
-                        frame = raw.frame,
-                        game_time = raw.game_time,
-                    })
-                )
-            end
+        end
+        local state = out.views.state
+        if state.game_over then
+            write_atomic(
+                run_dir .. "/score.json",
+                Json.encode({
+                    score = state.score,
+                    sector = state.sector,
+                    victory = state.victory,
+                    frame = raw.frame,
+                    game_time = raw.game_time,
+                })
+            )
         end
     end
     handle_inbox(raw)
