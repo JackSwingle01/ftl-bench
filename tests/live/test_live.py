@@ -1,10 +1,11 @@
 """Scripted integration test against the real, running game (seam 4).
 
-Needs FTL open with the mod installed and a Run in progress (start a new game first).
+Needs FTL open with the mod installed and a Run in progress (start a new Run first).
 Run: python3 -m unittest -v tests/live/test_live.py
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -34,7 +35,7 @@ class LiveGameTest(unittest.TestCase):
         if r.returncode != 0:
             raise unittest.SkipTest(f"game not available: {r.stderr.strip()}")
         if not json.loads(r.stdout).get("in_run"):
-            raise unittest.SkipTest("no Run in progress; start a new game first")
+            raise unittest.SkipTest("no Run in progress; start a new Run first")
 
     def tearDown(self) -> None:
         ftl("pause")
@@ -75,7 +76,8 @@ class LiveGameTest(unittest.TestCase):
         marker = "wait 0.1"
         start = time.time()
         self.assertEqual(ftl(*marker.split()).returncode, 0)
-        base = Path.home() / "Library/Application Support/FasterThanLight/ftlbench/runs"
+        default = Path.home() / "Library/Application Support/FasterThanLight/ftlbench"
+        base = Path(os.environ.get("FTL_BENCH_DIR", default)) / "runs"
         newest = max(base.iterdir(), key=lambda p: p.stat().st_mtime)
         last = json.loads((newest / "actions.jsonl").read_text().splitlines()[-1])
         self.assertEqual(last["command"], marker)

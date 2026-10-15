@@ -124,13 +124,32 @@ class CliTest(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("game not responding", r.stderr)
 
-    def test_wait_returns_after_the_requested_time(self) -> None:
-        self.start_game()
+    def test_wait_sleeps_for_the_time_the_mod_resolved(self) -> None:
+        self.start_game(lambda t: "ok\t0.5" if t == "wait 0.5" else "ok")
         started = time.monotonic()
         r = self.ftl("wait", "0.5")
         elapsed = time.monotonic() - started
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertGreaterEqual(elapsed, 0.5)
+
+    def test_cli_does_not_interpret_command_arguments(self) -> None:
+        # Only the mod parses Commands: an ok without seconds means no sleep at all.
+        self.start_game()
+        started = time.monotonic()
+        r = self.ftl("wait", "5")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_bridge_error_is_reported_instead_of_not_running(self) -> None:
+        live = self.base / "live"
+        live.mkdir(parents=True)
+        (live / "state.json").write_text("{}")
+        (live / "bridge_error.txt").write_text("bridge.lua:42: attempt to index a nil value")
+        old = time.time() - 60
+        os.utime(live / "state.json", (old, old))
+        r = self.ftl("state")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("mod error: bridge.lua:42: attempt to index a nil value", r.stderr)
 
     def test_rejected_wait_does_not_sleep(self) -> None:
         self.start_game(lambda _t: "error\twait takes 0.1 to 10 seconds in steps of 0.1")

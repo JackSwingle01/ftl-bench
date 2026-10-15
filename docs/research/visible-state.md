@@ -226,6 +226,10 @@ From [WIKI Beacons](https://ftl.fandom.com/wiki/Beacons) and the [DATA] `map_*_l
 | Solar flare / pulsar / ASB | Warning shortly before firing only. Flare: 28–34 s cycle, 5 s warning; pulsar: 11–18 s cycle, 5 s warning ([WIKI Environmental Hazards](https://ftl.fandom.com/wiki/Environmental_Hazards)). The cycle lengths are wiki knowledge, not on screen. |
 | Projectiles in flight | Yes (visual); hit/miss is rolled by the engine and not displayed beforehand |
 
+## 9. Harness metadata
+
+Not game information, so not subject to the visibility rules: whether a Run is in progress, whether the game is paused (a human always knows this) and why, and the bridge's own clocks (`frame`, `game_time`). These describe the Agent's session, not the game world. `game_time` is the bridge's count of unpaused seconds, not a value FTL shows.
+
 ## Hidden: must NOT appear in the Observation
 
 1. Enemy room interiors (crew, fires inside the room, breaches, O2) without a valid vision source (§1.2). This includes every enemy room while the enemy is cloaked, except rooms holding your own crew, boarding drone or mind-controlled enemy.

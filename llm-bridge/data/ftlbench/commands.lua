@@ -3,7 +3,7 @@
 
 FtlBench = FtlBench or {}
 
----@class Action
+---@class ResolvedCommand
 ---@field kind "pause"|"unpause"|"wait"
 ---@field seconds number?
 
@@ -12,7 +12,7 @@ local Commands = {}
 local WAIT_ERROR = "wait takes 0.1 to 10 seconds in steps of 0.1"
 
 ---@param arg string?
----@return Action?, string?
+---@return ResolvedCommand?, string?
 local function plan_wait(arg)
     local seconds = tonumber(arg or "")
     if not seconds then
@@ -25,7 +25,7 @@ local function plan_wait(arg)
     return { kind = "wait", seconds = seconds }
 end
 
----@type table<string, fun(args: string[], raw: RawState): Action?, string?>
+---@type table<string, fun(args: string[], raw: RawState): ResolvedCommand?, string?>
 local handlers = {
     pause = function()
         return { kind = "pause" }
@@ -44,7 +44,7 @@ local handlers = {
 ---Resolve Command text against the current raw state.
 ---@param text string
 ---@param raw RawState
----@return Action? action
+---@return ResolvedCommand? resolved
 ---@return string? error
 function Commands.plan(text, raw)
     local words = {}

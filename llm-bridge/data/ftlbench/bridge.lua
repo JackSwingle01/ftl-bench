@@ -5,7 +5,8 @@
 -- Files live under the FTL save folder (Hyperspace's working directory):
 --   ftlbench/live/state.json    current state view, rewritten every frame
 --   ftlbench/live/inbox.txt     Commands from the CLI: id \t wall_ms \t text
---   ftlbench/live/results.txt   answers: id \t ok   or   id \t error \t reason
+--   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
+--   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
 --   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run
 
 local Json, Visibility, Commands = FtlBench.Json, FtlBench.Visibility, FtlBench.Commands
@@ -13,6 +14,8 @@ local Json, Visibility, Commands = FtlBench.Json, FtlBench.Visibility, FtlBench.
 local BASE = "ftlbench"
 local LIVE = BASE .. "/live"
 
+-- ponytail: frame and game_time are bridge-made counters that restart on every on_init
+-- (including loading a save). Ticket #15 (determinism) decides what replay really needs.
 local frame, game_time, inbox_offset = 0, 0.0, 0
 ---@type string?
 local run_dir
@@ -54,7 +57,7 @@ local function read_raw()
         frame = frame,
         game_time = game_time,
         pause = {
-            player = in_run and gui.bPaused or false,
+            manual = in_run and gui.bPaused or false,
             event = in_run and gui.event_pause or false,
             menu = in_run and gui.menu_pause or false,
         },
@@ -69,8 +72,8 @@ local function read_raw()
     return raw
 end
 
----Carry out a resolved action. Returns an error message on runtime failure.
----@param action Action
+---Carry out a resolved Command. Returns an error message on runtime failure.
+---@param action ResolvedCommand
 ---@return string?
 local function execute(action)
     if action.kind == "pause" then
@@ -99,7 +102,9 @@ local function handle_inbox(raw)
             if action then
                 err = execute(action)
             end
-            local status = err and ("error\t" .. err) or "ok"
+            local status = err and ("error\t" .. err)
+                or (action and action.seconds and ("ok\t" .. action.seconds))
+                or "ok"
             append(LIVE .. "/results.txt", id .. "\t" .. status .. "\n")
             if run_dir then
                 append(run_dir .. "/actions.jsonl", Json.encode({
@@ -119,7 +124,7 @@ local function tick()
     local raw = read_raw()
     if raw.in_run then
         frame = frame + 1
-        if not (raw.pause.player or raw.pause.event or raw.pause.menu) then
+        if not Visibility.is_paused(raw) then
             game_time = game_time + Hyperspace.FPS.SpeedFactor / 16
         end
     end
@@ -145,10 +150,12 @@ local failed = false
 script.on_internal_event(Defines.InternalEvents.ON_TICK, function()
     local ok, err = pcall(tick)
     if not ok and not failed then
-        failed = true -- log once; a broken frame repeats 60 times a second
+        failed = true -- report once; a broken frame repeats 60 times a second
         print("[ftlbench] bridge error: " .. tostring(err))
-    elseif ok then
+        write_atomic(LIVE .. "/bridge_error.txt", tostring(err))
+    elseif ok and failed then
         failed = false
+        os.remove(LIVE .. "/bridge_error.txt")
     end
 end)
 

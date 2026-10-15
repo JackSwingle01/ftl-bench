@@ -7,7 +7,7 @@ local function raw_in_run()
         in_run = true,
         frame = 10,
         game_time = 1,
-        pause = { player = false, event = false, menu = false },
+        pause = { manual = false, event = false, menu = false },
         player = { hull = 30, hull_max = 30, scrap = 0 },
     }
 end

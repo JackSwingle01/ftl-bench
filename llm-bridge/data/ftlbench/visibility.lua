@@ -4,7 +4,7 @@
 FtlBench = FtlBench or {}
 
 ---@class RawPause
----@field player boolean  paused by the player (spacebar / `ftl pause`)
+---@field manual boolean  paused by spacebar or `ftl pause`
 ---@field event boolean   paused because an event window is open
 ---@field menu boolean    paused because a menu is open
 
@@ -40,9 +40,9 @@ local Visibility = {}
 
 ---@param raw RawState
 ---@return boolean
-local function is_paused(raw)
+function Visibility.is_paused(raw)
     local p = raw.pause
-    return p.player or p.event or p.menu
+    return p.manual or p.event or p.menu
 end
 
 ---@param raw RawShip
@@ -67,7 +67,7 @@ function Visibility.observe(_prev, raw, _hooks)
         views = {
             state = {
                 in_run = true,
-                paused = is_paused(raw),
+                paused = Visibility.is_paused(raw),
                 frame = raw.frame,
                 game_time = raw.game_time,
                 ship = raw.player and observe_ship(raw.player),

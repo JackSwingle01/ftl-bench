@@ -34,11 +34,17 @@ def require_game() -> None:
         fail("game not running (no bridge files; is FTL open with the mod installed?)", 2)
     age = time.time() - state.stat().st_mtime
     if age > STALE_AFTER:
+        error = LIVE / "bridge_error.txt"
+        if error.exists():
+            fail(f"game not responding (mod error: {error.read_text().strip()})", 2)
         fail(f"game not running (no update from the mod for {age:.0f}s)", 2)
 
 
 def send(text: str) -> tuple[str, str]:
-    """Send Command text to the mod and return (status, reason)."""
+    """Send Command text to the mod and return (status, detail).
+
+    detail is the reason for an error, or seconds to wait for an ok `wait`.
+    """
     cmd_id = f"{os.getpid()}-{time.time_ns()}"
     with (LIVE / "inbox.txt").open("a") as f:
         f.write(f"{cmd_id}\t{time.time_ns() // 1_000_000}\t{text}\n")
@@ -49,10 +55,10 @@ def send(text: str) -> tuple[str, str]:
         if results.exists():
             for line in results.read_text().splitlines():
                 if line.startswith(prefix):
-                    status, _, reason = line[len(prefix) :].partition("\t")
-                    return status, reason
+                    status, _, detail = line[len(prefix) :].partition("\t")
+                    return status, detail
         time.sleep(0.01)
-    fail("game not responding (the mod did not answer within 3s)", 2)
+    fail(f"game not responding (the mod did not answer within {ANSWER_TIMEOUT:.0f}s)", 2)
     raise AssertionError("unreachable")
 
 
@@ -63,11 +69,11 @@ def main(args: list[str]) -> None:
     if args == ["state"]:
         sys.stdout.write((LIVE / "state.json").read_text())
         return
-    status, reason = send(" ".join(args))
+    status, detail = send(" ".join(args))
     if status != "ok":
-        fail(reason, 1)
-    if args[0] == "wait":
-        time.sleep(float(args[1]))  # already validated by the mod
+        fail(detail, 1)
+    if detail:
+        time.sleep(float(detail))  # the mod resolved a wait
 
 
 if __name__ == "__main__":

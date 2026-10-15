@@ -7,7 +7,7 @@ local function raw_in_run()
         in_run = true,
         frame = 1200,
         game_time = 20.5,
-        pause = { player = false, event = false, menu = false },
+        pause = { manual = false, event = false, menu = false },
         player = { hull = 27, hull_max = 30, scrap = 45 },
     }
 end
@@ -28,7 +28,7 @@ t.test("outside a Run the state view says so and shows no ship", function()
         in_run = false,
         frame = 0,
         game_time = 0,
-        pause = { player = false, event = false, menu = false },
+        pause = { manual = false, event = false, menu = false },
     }
     t.eq(
         V.observe(nil, raw, {}).views.state,
