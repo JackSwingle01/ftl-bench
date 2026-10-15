@@ -19,6 +19,7 @@ BASE = Path(
     )
 )
 LIVE = BASE / "live"
+PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 STALE_AFTER = 3.0  # seconds without a state update before the game counts as not running
 ANSWER_TIMEOUT = 3.0  # seconds to wait for the mod to answer a Command
 USAGE = "usage: ftl rules | ftl state | ftl events [history N] | ftl <command> [args...]"
@@ -90,7 +91,7 @@ def main(args: list[str]) -> None:
     if not args:
         fail(USAGE, 1)
     if args == ["rules"]:
-        sys.stdout.write((Path(__file__).resolve().parents[1] / "prompts" / "primer.md").read_text())
+        sys.stdout.write((PROMPTS / "primer.md").read_text())
         return
     require_game()
     if args == ["state"]:
