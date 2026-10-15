@@ -563,3 +563,18 @@ t.test("at the exit, jumps offers the next sectors by type only", function()
         { id = "sector:6", type = "nebula" },
     })
 end)
+
+t.test("jumps is not ready while an event is open", function()
+    local raw = raw_with_map()
+    raw.pause.event = true
+    local j = V.observe(nil, raw, {}).views.jumps --[[@as table]]
+    t.eq({ j.ready, j.not_ready }, { false, "an event is open" })
+end)
+
+t.test("arriving at a beacon and entering a sector make events", function()
+    local before, after = raw_with_map(), raw_with_map()
+    after.map.current = 3
+    t.eq(V.observe(before, after, {}).events, { { type = "arrived", beacon = "beacon:3" } })
+    before.sector, after.sector, after.map.current = 1, 2, 0
+    t.eq(V.observe(before, after, {}).events, { { type = "new_sector", sector = 2 } })
+end)

@@ -424,3 +424,10 @@ t.test("sector jumps only work at the exit", function()
         "next sectors can only be chosen at the exit beacon"
     )
 end)
+
+t.test("jump refuses enemy-prefixed IDs", function()
+    t.eq(
+        select(2, C.plan("jump enemy:beacon:1", raw_with_map())),
+        "usage: jump <beacon> | jump <sector> (at the exit)"
+    )
+end)

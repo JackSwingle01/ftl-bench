@@ -289,11 +289,13 @@ local function observe_system(s)
     }
 end
 
+---Round to one decimal place (string.format would round 0.25 down).
 ---@param n number
 ---@return number
 local function tenths(n)
     return math.floor(n * 10 + 0.5) / 10
 end
+Visibility.tenths = tenths
 
 ---@param ship RawShip
 ---@param view table
@@ -466,6 +468,13 @@ local function observe_events(prev, raw)
         crew_events(prev.player, raw.player, events)
         system_events(prev.player, raw.player, events)
     end
+    if prev and prev.map and raw.map then
+        if prev.sector ~= raw.sector then
+            events[#events + 1] = { type = "new_sector", sector = raw.sector }
+        elseif prev.map.current ~= raw.map.current then
+            events[#events + 1] = { type = "arrived", beacon = "beacon:" .. raw.map.current }
+        end
+    end
     if prev and raw.game_over and not prev.game_over then
         local event = run_result(raw)
         event.type = "game_over"
@@ -490,18 +499,44 @@ local function jumps_until_fleet(fleet, b)
     return math.ceil(gap / fleet.advance)
 end
 
+---Beacon ids linked to the current beacon, in map order.
+---@param map RawMap
+---@return integer[]
+function Visibility.current_links(map)
+    for _, b in ipairs(map.beacons) do
+        if b.id == map.current then
+            return b.links
+        end
+    end
+    return {}
+end
+
 ---@param map RawMap
 ---@return table<integer, boolean>
 local function adjacent_to_current(map)
     local near = {}
-    for _, b in ipairs(map.beacons) do
-        if b.id == map.current then
-            for _, l in ipairs(b.links) do
-                near[l] = true
-            end
-        end
+    for _, l in ipairs(Visibility.current_links(map)) do
+        near[l] = true
     end
     return near
+end
+
+---Why the ship can't jump right now, or nil when it can. Commands give the same reasons.
+---@param raw RawState
+---@return string?
+function Visibility.jump_blocker(raw)
+    local ship = raw.player or {}
+    if raw.pause.event then
+        return "an event is open"
+    elseif (ship.fuel or 0) < 1 then
+        return "no fuel"
+    elseif (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1) then
+        return ("FTL drive charging (%.1f of %.1f)"):format(
+            tenths(ship.ftl_charge or 0),
+            tenths(ship.ftl_charge_time or 1)
+        )
+    end
+    return nil
 end
 
 ---@param raw RawState
@@ -541,19 +576,16 @@ end
 local function observe_jumps(raw, map)
     local ship = raw.player or {}
     local here = setmetatable({}, LIST)
-    for _, b in ipairs(map.beacons) do
-        if b.id == map.current then
-            for j, l in ipairs(b.links) do
-                here[j] = "beacon:" .. l
-            end
-        end
+    for j, l in ipairs(Visibility.current_links(map)) do
+        here[j] = "beacon:" .. l
     end
     local sectors = setmetatable({}, LIST)
     for i, s in ipairs(map.sector_choices or {}) do
         sectors[i] = { id = "sector:" .. s.index, type = SECTOR_TYPES[s.type + 1] }
     end
     local fuel, charge, time = ship.fuel or 0, ship.ftl_charge or 0, ship.ftl_charge_time or 1
-    local not_ready = (fuel < 1 and "no fuel") or (charge < time and "FTL drive charging") or nil
+    local blocker = Visibility.jump_blocker(raw)
+    local not_ready = blocker and blocker:match("^[^(]+"):gsub("%s+$", "")
     return {
         beacons = here,
         sectors = sectors,

@@ -175,13 +175,6 @@ end
 
 local JUMP_USAGE = "usage: jump <beacon> | jump <sector> (at the exit)"
 
----Round to one decimal the way the state view does (string.format rounds 0.25 down).
----@param n number
----@return number
-local function tenth(n)
-    return math.floor(n * 10 + 0.5) / 10
-end
-
 ---@param map RawMap
 ---@param id integer
 ---@return RawBeacon?
@@ -198,21 +191,17 @@ end
 ---@param raw RawState
 ---@return ResolvedCommand?, string?
 local function plan_jump(args, raw)
-    local map, ship = raw.map, raw.player --[[@as RawShip]]
-    local beacon = #args == 1 and parse_id(args[1], "beacon") or nil
-    local sector = #args == 1 and parse_id(args[1], "sector") or nil
-    if not (beacon or sector) or not map then
+    local map = raw.map
+    local beacon, b_enemy = parse_id(args[1], "beacon")
+    local sector, s_enemy = parse_id(args[1], "sector")
+    if #args ~= 1 or not (beacon or sector) or b_enemy or s_enemy or not map then
         return nil, JUMP_USAGE
-    elseif raw.pause.event then
+    end
+    local blocker = FtlBench.Visibility.jump_blocker(raw)
+    if blocker == "an event is open" then
         return nil, "an event is open; answer it first"
-    elseif (ship.fuel or 0) < 1 then
-        return nil, "no fuel"
-    elseif (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1) then
-        return nil,
-            ("FTL drive charging (%.1f of %.1f)"):format(
-                tenth(ship.ftl_charge),
-                tenth(ship.ftl_charge_time)
-            )
+    elseif blocker then
+        return nil, blocker
     end
     local here = find_beacon(map, map.current) --[[@as RawBeacon]]
     if sector then
@@ -232,11 +221,11 @@ local function plan_jump(args, raw)
                 table.concat(offered, ", ")
             )
     end
-    beacon = beacon --[[@as integer]]
+    beacon = beacon --[[@as integer]] -- not a sector, so it is a beacon
     if not find_beacon(map, beacon) then
         return nil, "no beacon:" .. beacon
     end
-    for _, l in ipairs(here.links) do
+    for _, l in ipairs(FtlBench.Visibility.current_links(map)) do
         if l == beacon then
             return { kind = "jump", beacon = beacon }
         end

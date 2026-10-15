@@ -435,6 +435,8 @@ local function tick()
     for _, view in ipairs({ "map", "jumps" }) do
         if out.views[view] then
             write_atomic(LIVE .. "/" .. view .. ".json", Json.encode(out.views[view]))
+        else
+            os.remove(LIVE .. "/" .. view .. ".json") -- never serve a finished Run's map
         end
     end
     if run_dir then
@@ -468,6 +470,7 @@ os.remove(LIVE .. "/run.txt") -- no Run until on_init says so
 
 script.on_init(function()
     frame, game_time, prev = 0, 0.0, nil
+    scouted, scouted_sector = {}, nil -- markers seen in an earlier Run must not carry over
     local name = "runs/" .. os.date("%Y%m%d-%H%M%S")
     run_dir = BASE .. "/" .. name
     mkdir(run_dir)
