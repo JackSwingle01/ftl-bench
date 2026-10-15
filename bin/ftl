@@ -107,8 +107,8 @@ def main(args: list[str]) -> None:
         if not view.exists():
             fail("no Run in progress", 1)
         sys.stdout.write(view.read_text())
-        if args[0] in ("map", "upgrades"):
-            post(f"show {args[0]}")  # open the window too, for anyone watching; a read never waits
+        if args[0] != "state" and args[0] != "jumps":
+            post(f"show {args[0]}")  # open the window too, as a player would; a read never waits
         return
     if args[0] == "events":
         events(args[1:])

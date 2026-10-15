@@ -24,15 +24,22 @@ FtlBench = FtlBench or {}
 ---@field item integer?     buy: store item index
 ---@field cost integer?     upgrade: scrap it was checked against
 ---@field command integer?  teleport: 1 send crew out, 2 bring them back
----@field window string?    show: "map" or "upgrades"
+---@field window string?    show: "map", "upgrades" or "store"
 
 local Commands = {}
 
 -- Commands that still work while an event window is open.
 local EVENT_SAFE = { choose = true, wait = true, pause = true, unpause = true, show = true }
 -- Commands that still work while another game window (store, upgrades, menu) is open.
-local WINDOW_SAFE =
-    { close = true, buy = true, wait = true, pause = true, unpause = true, show = true }
+local WINDOW_SAFE = {
+    close = true,
+    buy = true,
+    upgrade = true,
+    wait = true,
+    pause = true,
+    unpause = true,
+    show = true,
+}
 
 local WAIT_ERROR = "wait takes 0.1 to 10 seconds in steps of 0.1"
 
@@ -438,6 +445,8 @@ local function plan_buy(args, raw)
         return nil, "usage: buy <item>"
     elseif not raw.store then
         return nil, "there is no store here"
+    elseif raw.window ~= "store" then
+        return nil, "the store window isn't open; run ftl store first"
     end
     local it = raw.store.items[n + 1]
     if not it then
@@ -463,6 +472,8 @@ local function plan_upgrade(args, raw)
         return nil, "usage: upgrade <system|reactor>"
     elseif not raw.upgrades then
         return nil, "upgrades are not available right now"
+    elseif raw.window ~= "upgrades" then
+        return nil, "the upgrades window isn't open; run ftl upgrades first"
     end
     local scrap = raw.player.scrap
     if args[1] == "reactor" then
@@ -611,9 +622,12 @@ local handlers = {
     jump = plan_jump,
     choose = plan_choose,
     target = plan_target,
-    show = function(args)
-        if #args ~= 1 or (args[1] ~= "map" and args[1] ~= "upgrades") then
-            return nil, "usage: show map|upgrades"
+    show = function(args, raw)
+        local w = args[1]
+        if #args ~= 1 or (w ~= "map" and w ~= "upgrades" and w ~= "store") then
+            return nil, "usage: show map|upgrades|store"
+        elseif w == "store" and not raw.store then
+            return nil, "there is no store here"
         end
         return { kind = "show", window = args[1] }
     end,
@@ -625,8 +639,8 @@ local handlers = {
     buy = plan_buy,
     upgrade = plan_upgrade,
     close = function(_, raw)
-        if not (raw.store and raw.store.open) then
-            return nil, "no store window is open"
+        if not raw.pause.menu then
+            return nil, "no window is open"
         end
         return { kind = "close" }
     end,

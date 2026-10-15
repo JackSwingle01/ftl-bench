@@ -576,8 +576,9 @@ t.test("a beam needs two different rooms", function()
 end)
 
 -- #12: buy, upgrade, close.
-local function raw_at_store()
+local function raw_at_store(window)
     local raw = raw_with_systems()
+    raw.window, raw.pause.menu = window or "store", true
     raw.player.scrap = 60
     raw.store = {
         open = true,
@@ -615,7 +616,7 @@ t.test("buy explains why it can't", function()
 end)
 
 t.test("upgrade a system or the reactor", function()
-    local raw = raw_at_store()
+    local raw = raw_at_store("upgrades")
     t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0, cost = 20 })
     t.eq(C.plan("upgrade reactor", raw), { kind = "upgrade_reactor" })
     t.eq(select(2, C.plan("upgrade weapons", raw)), "system:weapons is at its maximum level")
@@ -626,11 +627,11 @@ t.test("upgrade a system or the reactor", function()
     )
 end)
 
-t.test("close shuts an open store window", function()
+t.test("close shuts an open window", function()
     t.eq(C.plan("close", raw_at_store()), { kind = "close" })
     local raw = raw_at_store()
-    raw.store.open = false
-    t.eq(select(2, C.plan("close", raw)), "no store window is open")
+    raw.pause.menu = false
+    t.eq(select(2, C.plan("close", raw)), "no window is open")
 end)
 
 t.test("an open game window blocks actions except close, wait and pause", function()
@@ -643,7 +644,10 @@ t.test("an open game window blocks actions except close, wait and pause", functi
 end)
 
 t.test("upgrade carries the cost it was checked against", function()
-    t.eq(C.plan("upgrade shields", raw_at_store()), { kind = "upgrade", system = 0, cost = 20 })
+    t.eq(
+        C.plan("upgrade shields", raw_at_store("upgrades")),
+        { kind = "upgrade", system = 0, cost = 20 }
+    )
 end)
 
 -- #8: system abilities. Our ship gains cloaking (10), battery (12), hacking (15), mind control (14)
@@ -793,9 +797,33 @@ t.test("teleport needs crew to send, or crew to bring back", function()
     )
 end)
 
-t.test("show opens the map or upgrades window, even with an event or window up", function()
-    local raw = raw_with_systems()
+t.test("show opens the map, upgrades or store window, even with an event or window up", function()
+    local raw = raw_at_store()
     t.eq(C.plan("show map", raw), { kind = "show", window = "map" })
     t.eq(C.plan("show upgrades", raw), { kind = "show", window = "upgrades" })
-    t.eq(select(2, C.plan("show crew", raw)), "usage: show map|upgrades")
+    t.eq(C.plan("show store", raw), { kind = "show", window = "store" })
+    t.eq(select(2, C.plan("show store", raw_with_systems())), "there is no store here")
+    t.eq(select(2, C.plan("show crew", raw)), "usage: show map|upgrades|store")
+end)
+
+t.test("buy and upgrade need their window open; other actions need every window closed", function()
+    local raw = raw_at_store()
+    raw.window = nil
+    t.eq(select(2, C.plan("buy item:0", raw)), "the store window isn't open; run ftl store first")
+    t.eq(
+        select(2, C.plan("upgrade shields", raw)),
+        "the upgrades window isn't open; run ftl upgrades first"
+    )
+    raw.window, raw.pause.menu = "map", true
+    t.eq(select(2, C.plan("jump beacon:1", raw)), "a game window is open; close it first")
+    t.eq(C.plan("close", raw), { kind = "close" })
+    raw.window = "upgrades"
+    t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0, cost = 20 })
+end)
+
+t.test("an open event blocks buy and upgrade", function()
+    local raw = raw_at_store()
+    raw.pause.event, raw.event = true, { text = "", choices = {}, received = {} }
+    t.eq(select(2, C.plan("buy item:0", raw)), "an event is open; answer it first")
+    t.eq(select(2, C.plan("upgrade shields", raw)), "an event is open; answer it first")
 end)

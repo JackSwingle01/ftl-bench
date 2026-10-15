@@ -26,7 +26,9 @@ An open event window keeps the game paused until you answer it.
 - `ftl events`: everything that happened since you last ran `ftl events`, one JSON object per line.
 - `ftl events history N`: the last N events, whether or not you have read them.
 - `ftl map`, `ftl jumps`, `ftl store`, `ftl upgrades`: the sector map, the beacons you can jump to
-  now, the store's stock, and the upgrades on offer.
+  now, the store's stock, and the upgrades on offer. Each also opens that window on screen, as it
+  would for a player (not during an event). While a window is open every other Command is
+  refused until you `close` it.
 
 You only see what a human player could see on screen. Anything else is left out or marked
 `hidden` with a reason.
@@ -44,7 +46,8 @@ reason and exits non-zero when it does not, so `&&` chains stop at the first fai
 - Abilities: `cloak`, `battery`, `hack <enemy:room>`, `mindcontrol <enemy:crew>`,
   `teleport send|return <room>`
 - Travel and events: `jump <beacon>`, `choose <choice>`
-- Store and ship: `buy <item>`, `upgrade <system|reactor>`, `close` (leave an open store window)
+- Store and ship: `buy <item>`, `upgrade <system|reactor>`, `close` (shut the open map, upgrades or store window).
+  `buy` needs `ftl store` first and `upgrade` needs `ftl upgrades` first
 
 Run each as `ftl <command>`, e.g. `ftl power shields +2 && ftl weapon weapon:1 on`.
 

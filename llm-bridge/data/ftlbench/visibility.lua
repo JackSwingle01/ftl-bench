@@ -146,6 +146,7 @@ FtlBench = FtlBench or {}
 ---@field frame integer        bridge ticks since the Run started
 ---@field game_time number     unpaused game seconds since the Run started
 ---@field pause RawPause
+---@field window string?    "map", "upgrades" or "store" while the Agent has that window open
 ---@field nebula boolean?
 ---@field sector integer?     1-8, shown on the HUD
 ---@field game_over boolean?

@@ -343,8 +343,8 @@ local function read_event(gui)
     return { text = box.mainText, choices = choices, received = read_resources(box.rewards) }
 end
 
--- A window opened only so a watcher can see what the Agent reads (`ftl map`, `ftl upgrades`).
-local peek_window = false
+-- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
+local shown_window = nil
 
 -- Enemy crew objects by uid, for mind control (filled by read_enemy).
 local enemy_crew_objects = {}
@@ -499,8 +499,8 @@ local function read_raw()
     local gui = app and app.gui
     local ship = Hyperspace.ships.player
     local in_run = gui ~= nil and ship ~= nil and not app.menu.bOpen
-    if peek_window and not (gui and gui.menu_pause) then
-        peek_window = false -- closed by the watcher; a window opened later must block as usual
+    if shown_window and not (gui and gui.menu_pause) then
+        shown_window = nil -- closed by the watcher
     end
     ---@type RawState
     local raw = {
@@ -510,8 +510,7 @@ local function read_raw()
         pause = {
             manual = in_run and gui.bPaused or false,
             event = in_run and gui.event_pause or false,
-            -- A peek window (ftl map/upgrades) closes before the next action, so it blocks nothing.
-            menu = in_run and gui.menu_pause and not peek_window or false,
+            menu = in_run and gui.menu_pause or false,
         },
     }
     if in_run then
@@ -555,6 +554,7 @@ local function read_raw()
         raw.map = read_map(app.world.starMap, raw.sector)
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
+        raw.window = shown_window or (raw.store and raw.store.open and "store") or nil
         raw.upgrades = read_upgrades(ship)
     end
     return raw
@@ -649,12 +649,6 @@ local function execute(cmd)
         w.lastTargets:clear() -- autofire re-aims from these
         w.targetId, w.fireWhenReady = -1, false
     elseif cmd.kind == "buy" then
-        -- Shop with the store window open, as a player does (opened with the store hotkey).
-        local loc = Hyperspace.App.world.starMap.currentLoc
-        local store = loc and loc.event and loc.event.pStore
-        if store and not store.bOpen and KEY_STORE ~= 0 then
-            press(KEY_STORE)
-        end
         local ship, box = Hyperspace.ships.player, store_boxes[cmd.item + 1]
         local before, cost = int(ship.currentScrap), int(box.desc.cost)
         box:Purchase()
@@ -676,6 +670,7 @@ local function execute(cmd)
         -- Escape closes the store the way a player does, clearing the game's window pause too
         -- (Store:Close() alone left it set). Commands only allows this while a store is open.
         press(KEY_ESCAPE)
+        shown_window = nil
     elseif cmd.kind == "cloak" or cmd.kind == "battery" then
         local ship = Hyperspace.ships.player
         local sys = cmd.kind == "cloak" and ship.cloakSystem or ship.batterySystem
@@ -708,14 +703,19 @@ local function execute(cmd)
     elseif cmd.kind == "teleport" then
         Hyperspace.App.world.playerShip:InitiateTeleport(cmd.room, cmd.command)
     elseif cmd.kind == "show" then
-        -- Open the window the Agent is reading, for anyone watching; only over the plain ship view.
+        -- Open the window the Agent is reading, as a player would; only over the plain ship view.
         local gui = Hyperspace.App.gui
-        if peek_window and gui.menu_pause then
-            press(KEY_ESCAPE) -- swap our own peek window for the new one
+        if shown_window and gui.menu_pause then
+            press(KEY_ESCAPE) -- swap our own window for the new one
+            shown_window = nil
         end
         if not (gui.menu_pause or gui.event_pause) then
-            press(cmd.window == "map" and KEY_MAP or KEY_UPGRADES)
-            peek_window = true
+            local keys = { map = KEY_MAP, upgrades = KEY_UPGRADES, store = KEY_STORE }
+            if keys[cmd.window] == 0 then
+                return "no store hotkey is bound; close FTL and run scripts/install-mod"
+            end
+            press(keys[cmd.window])
+            shown_window = cmd.window
         end
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
@@ -774,13 +774,6 @@ local function handle_inbox(raw)
         local id, wall_ms, text = line:match("^([^\t]*)\t([^\t]*)\t(.*)$")
         if id then
             local cmd, err = Commands.plan(text, raw)
-            local passive = cmd and (cmd.kind == "show" or cmd.kind == "pause")
-            if cmd and not passive and peek_window then
-                if Hyperspace.App.gui.menu_pause then
-                    press(KEY_ESCAPE) -- close the peek window before acting
-                end
-                peek_window = false
-            end
             if cmd then
                 local ok, result = pcall(execute, cmd)
                 -- Always answer, so the CLI never waits on a Command that broke mid-way.
