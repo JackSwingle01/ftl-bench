@@ -102,6 +102,16 @@ FtlBench = FtlBench or {}
 ---@field fleet { x: number, y: number, radius: number, advance: number }
 ---@field sector_choices { index: integer, type: integer }[]?  only at the exit beacon
 
+---@class RawChoice
+---@field text string
+---@field type integer          0 normal, 1 blue option, 2 requirement not met
+---@field rewards table<string, number>  resource changes the game displays on the choice
+
+---@class RawEvent
+---@field text string
+---@field choices RawChoice[]
+---@field received table<string, number>  rewards the event window displays
+
 ---@class RawState
 ---@field in_run boolean
 ---@field frame integer        bridge ticks since the Run started
@@ -114,6 +124,7 @@ FtlBench = FtlBench or {}
 ---@field score integer?      FTL's running Score; the game only shows it when the Run ends
 ---@field player RawShip?
 ---@field map RawMap?
+---@field event RawEvent?    the open event window, if any
 
 ---@class Observation
 ---@field views { state: table, map: table?, jumps: table? }
@@ -175,6 +186,20 @@ local function share_wall(a, b)
     local along = math.min(a.y + a.h, b.y + b.h) - math.max(a.y, b.y)
     return (across > 0 and (a.y + a.h == b.y or b.y + b.h == a.y))
         or (along > 0 and (a.x + a.w == b.x or b.x + b.w == a.x))
+end
+
+---Copy only the non-zero numbers, or nil when there are none.
+---@param t table<string, number>?
+---@return table<string, number>?
+local function nonzero(t)
+    local out
+    for k, v in pairs(t or {}) do
+        if v ~= 0 then
+            out = out or {}
+            out[k] = v
+        end
+    end
+    return out
 end
 
 ---Rooms a human can see into on their own ship.
@@ -475,12 +500,35 @@ local function observe_events(prev, raw)
             events[#events + 1] = { type = "arrived", beacon = "beacon:" .. raw.map.current }
         end
     end
+    if raw.event and not (prev and prev.event and prev.event.text == raw.event.text) then
+        events[#events + 1] = {
+            type = "event",
+            text = raw.event.text,
+            choices = #raw.event.choices,
+            received = nonzero(raw.event.received),
+        }
+    end
     if prev and raw.game_over and not prev.game_over then
         local event = run_result(raw)
         event.type = "game_over"
         events[#events + 1] = event
     end
     return events
+end
+
+---@param e RawEvent
+local function observe_event(e)
+    local choices = setmetatable({}, LIST)
+    for i, c in ipairs(e.choices) do
+        choices[i] = {
+            id = "choice:" .. (i - 1),
+            text = c.text,
+            blue = c.type == 1 or nil,
+            available = c.type ~= 2,
+            shows = nonzero(c.rewards),
+        }
+    end
+    return { text = e.text, choices = choices, received = nonzero(e.received) }
 end
 
 local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1
@@ -618,6 +666,7 @@ function Visibility.observe(prev, raw, _hooks)
                 game_time = raw.game_time,
                 ship = raw.player and observe_ship(raw, raw.player),
                 sector = raw.sector,
+                event = raw.event and observe_event(raw.event),
             },
         },
         events = setmetatable(observe_events(prev, raw), LIST),

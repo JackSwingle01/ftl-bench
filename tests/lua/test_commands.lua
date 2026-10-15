@@ -431,3 +431,30 @@ t.test("jump refuses enemy-prefixed IDs", function()
         "usage: jump <beacon> | jump <sector> (at the exit)"
     )
 end)
+
+-- #11: choose.
+local function raw_with_event()
+    local raw = raw_with_systems()
+    raw.pause.event = true
+    raw.event = {
+        text = "An event.",
+        choices = {
+            { text = "Yes.", type = 0, rewards = {} },
+            { text = "(Scanners) Scan.", type = 2, rewards = {} },
+        },
+        received = {},
+    }
+    return raw
+end
+
+t.test("choose resolves an available choice", function()
+    t.eq(C.plan("choose choice:0", raw_with_event()), { kind = "choose", choice = 0 })
+end)
+
+t.test("choose refuses unavailable, unknown or absent choices", function()
+    local raw = raw_with_event()
+    t.eq(select(2, C.plan("choose choice:1", raw)), "choice:1 ((Scanners) Scan.) is not available")
+    t.eq(select(2, C.plan("choose choice:5", raw)), "no choice:5")
+    t.eq(select(2, C.plan("choose 1", raw)), "usage: choose <choice>")
+    t.eq(select(2, C.plan("choose choice:0", raw_with_systems())), "no event is open")
+end)

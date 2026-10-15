@@ -4,7 +4,7 @@
 FtlBench = FtlBench or {}
 
 ---@class ResolvedCommand
----@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"
+---@field kind "pause"|"unpause"|"wait"|"move"|"door"|"power"|"weapon"|"drone"|"jump"|"jump_sector"|"choose"
 ---@field seconds number?   wait
 ---@field crew integer?     move: crew uid
 ---@field room integer?     move: room id
@@ -17,6 +17,7 @@ FtlBench = FtlBench or {}
 ---@field on boolean?       weapon, drone
 ---@field beacon integer?   jump
 ---@field sector integer?   jump_sector: index of the chosen sector
+---@field choice integer?   choose: 0-based choice index
 
 local Commands = {}
 
@@ -234,6 +235,25 @@ local function plan_jump(args, raw)
         ("beacon:%d is not linked to the current beacon (beacon:%d)"):format(beacon, map.current)
 end
 
+---@param args string[]
+---@param raw RawState
+---@return ResolvedCommand?, string?
+local function plan_choose(args, raw)
+    local n, enemy = parse_id(args[1], "choice")
+    if #args ~= 1 or not n or enemy then
+        return nil, "usage: choose <choice>"
+    elseif not raw.event then
+        return nil, "no event is open"
+    end
+    local c = raw.event.choices[n + 1]
+    if not c then
+        return nil, "no choice:" .. n
+    elseif c.type == 2 then
+        return nil, ("choice:%d (%s) is not available"):format(n, c.text)
+    end
+    return { kind = "choose", choice = n }
+end
+
 ---@param arg string?
 ---@return ResolvedCommand?, string?
 local function plan_wait(arg)
@@ -328,6 +348,7 @@ local handlers = {
     door = plan_door,
     power = plan_power,
     jump = plan_jump,
+    choose = plan_choose,
     weapon = function(args, raw)
         return plan_armament("weapon", args, raw)
     end,

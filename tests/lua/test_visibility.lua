@@ -578,3 +578,62 @@ t.test("arriving at a beacon and entering a sector make events", function()
     before.sector, after.sector, after.map.current = 1, 2, 0
     t.eq(V.observe(before, after, {}).events, { { type = "new_sector", sector = 2 } })
 end)
+
+-- #11: events and choices. ChoiceText type: 0 normal, 1 blue option, 2 requirement not met.
+---@return RawState
+local function raw_with_event()
+    local raw = raw_with_systems()
+    raw.pause.event = true
+    raw.event = {
+        text = "You find a small ship struggling through the asteroids.",
+        choices = {
+            { text = "Hail them.", type = 0, rewards = {} },
+            { text = "(Engi Crew) Talk them through.", type = 1, rewards = {} },
+            { text = "(Long-Ranged Scanners) Scan.", type = 2, rewards = {} },
+            { text = "Take the fuel.", type = 0, rewards = { fuel = 3, scrap = 0 } },
+        },
+        received = { scrap = 15, fuel = 0 },
+    }
+    return raw
+end
+
+t.test("an open event shows its text and numbered choices", function()
+    local e = V.observe(nil, raw_with_event(), {}).views.state.event
+    t.eq(e.text, "You find a small ship struggling through the asteroids.")
+    t.eq(e.choices[1], { id = "choice:0", text = "Hail them.", available = true })
+    t.eq(
+        e.choices[2],
+        { id = "choice:1", text = "(Engi Crew) Talk them through.", blue = true, available = true }
+    )
+    t.eq(
+        e.choices[3],
+        { id = "choice:2", text = "(Long-Ranged Scanners) Scan.", available = false }
+    )
+end)
+
+t.test("a choice shows only the resource changes the game displays", function()
+    local e = V.observe(nil, raw_with_event(), {}).views.state.event
+    t.eq(e.choices[4].shows, { fuel = 3 })
+    t.eq(e.choices[1].shows, nil)
+end)
+
+t.test("rewards the event window displays are reported as received", function()
+    t.eq(V.observe(nil, raw_with_event(), {}).views.state.event.received, { scrap = 15 })
+end)
+
+t.test("no event window, no event in the state", function()
+    t.eq(V.observe(nil, raw_with_systems(), {}).views.state.event, nil)
+end)
+
+t.test("a new event window produces an event", function()
+    local before, after = raw_with_systems(), raw_with_event()
+    t.eq(events(before, after), {
+        {
+            type = "event",
+            text = "You find a small ship struggling through the asteroids.",
+            choices = 4,
+            received = { scrap = 15 },
+        },
+    })
+    t.eq(#events(after, after), 0)
+end)

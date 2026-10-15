@@ -217,6 +217,39 @@ local function dump()
         local d = dl[i]
         p("slot", i, "name", d:GetName(), "powered", d.powered, "deployed", d.deployed)
     end
+    local gui = Hyperspace.App.gui
+    p("== choicebox open", gui.choiceBoxOpen, "event_pause", gui.event_pause)
+    local cb = gui.choiceBox
+    p("main", cb.mainText)
+    p(
+        "box rewards scrap",
+        cb.rewards.scrap,
+        "fuel",
+        cb.rewards.fuel,
+        "missiles",
+        cb.rewards.missiles
+    )
+    for i = 0, cb.choices:size() - 1 do
+        local c = cb.choices[i]
+        p(
+            "choice",
+            i,
+            "type",
+            c.type,
+            "text",
+            c.text,
+            "r.scrap",
+            c.rewards.scrap,
+            "r.fuel",
+            c.rewards.fuel,
+            "r.missiles",
+            c.rewards.missiles,
+            "r.drones",
+            c.rewards.drones,
+            "r.crew",
+            c.rewards.crew
+        )
+    end
     local f = assert(io.open("ftlbench/probe.txt", "w"))
     f:write(table.concat(out, "\n") .. "\n")
     f:close()
@@ -226,6 +259,39 @@ script.on_internal_event(Defines.InternalEvents.ON_TICK, function()
     if n % 120 == 0 then
         local ok, err = pcall(dump)
         if not ok then
+            local gui = Hyperspace.App.gui
+            p("== choicebox open", gui.choiceBoxOpen, "event_pause", gui.event_pause)
+            local cb = gui.choiceBox
+            p("main", cb.mainText)
+            p(
+                "box rewards scrap",
+                cb.rewards.scrap,
+                "fuel",
+                cb.rewards.fuel,
+                "missiles",
+                cb.rewards.missiles
+            )
+            for i = 0, cb.choices:size() - 1 do
+                local c = cb.choices[i]
+                p(
+                    "choice",
+                    i,
+                    "type",
+                    c.type,
+                    "text",
+                    c.text,
+                    "r.scrap",
+                    c.rewards.scrap,
+                    "r.fuel",
+                    c.rewards.fuel,
+                    "r.missiles",
+                    c.rewards.missiles,
+                    "r.drones",
+                    c.rewards.drones,
+                    "r.crew",
+                    c.rewards.crew
+                )
+            end
             local f = assert(io.open("ftlbench/probe.txt", "w"))
             f:write("PROBE ERROR " .. tostring(err) .. "\n")
             f:close()
