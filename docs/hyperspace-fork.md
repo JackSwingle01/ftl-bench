@@ -9,6 +9,8 @@ Added so far:
 - `CApp` input functions `OnMouseMove`, `OnLButtonDown/Up`, `OnKeyDown/Up`, so a mod can press buttons inside the
   game. Only the dev autostart (`dev-probe/`) uses them; scored Runs never install it (see ADR 0002).
 - `MainMenu.continueButton`, `MainMenu.startButton`, `ShipBuilder.startButton` (dev autostart).
+- `WeaponSystem.PowerWeapon`, `WeaponSystem.DePowerWeapon`, `DroneSystem.PowerDrone` (power weapons and drones the way
+  the UI does).
 - `CommandGui.gameover`, `CommandGui.alreadyWon`, `CommandGui.gameOverScreen`, `GameOver.bVictory` (game over and
   victory).
 
