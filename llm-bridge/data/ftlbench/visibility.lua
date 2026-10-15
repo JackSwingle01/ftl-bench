@@ -38,6 +38,7 @@ FtlBench = FtlBench or {}
 ---@field stun number?         seconds of stun left
 ---@field mind_controlled boolean?
 ---@field taking_damage boolean? health dropped within the last couple of seconds
+---@field drone boolean?          a crew drone (not a lifeform)
 ---@field skills integer[] piloting, engines, shields, weapons, repair, combat
 
 ---@class RawSystem
@@ -68,7 +69,7 @@ FtlBench = FtlBench or {}
 ---@field hull_max integer
 ---@field scrap integer
 ---@field oxygen number?          whole-ship percentage
----@field sensors_power integer?  effective Sensors power (0 if missing, broken or ionized)
+---@field sensors_power integer?  Sensors base power without the manning bonus (0 if missing, broken or ionized)
 ---@field rooms RawRoom[]?
 ---@field doors RawDoor[]?
 ---@field crew RawCrew[]?         own crew only (for the enemy: its crew; on_enemy_ship = aboard our ship)
@@ -124,6 +125,7 @@ FtlBench = FtlBench or {}
 ---@field evasion number
 ---@field oxygen number
 ---@field hacked_system integer?  system type our hacking drone is attached to
+---@field hacking_powered boolean? our Hacking system has power (needed for evasion/oxygen readouts)
 ---@field destroyed boolean?
 
 ---@class RawState
@@ -418,14 +420,14 @@ local function observe_intruders(raw, lit, view)
     for _, c in ipairs(raw.enemy and raw.enemy.crew or {}) do
         if c.on_enemy_ship and not c.dead then
             view.intruders_detected = true
-            if lit == nil or lit[c.room] or sense then
-                view.intruders[#view.intruders + 1] = {
-                    id = "enemy:crew:" .. c.uid,
-                    race = c.species,
-                    room = "room:" .. c.room,
-                    health = round(c.health),
-                    health_max = round(c.health_max),
-                }
+            local in_sight = lit == nil or lit[c.room] == true
+            if in_sight or (sense and not c.drone) then
+                local intruder =
+                    { id = "enemy:crew:" .. c.uid, race = c.species, room = "room:" .. c.room }
+                if in_sight then -- health bars need room vision; unverified for sensed-only crew
+                    intruder.health, intruder.health_max = round(c.health), round(c.health_max)
+                end
+                view.intruders[#view.intruders + 1] = intruder
             end
         end
     end
@@ -565,6 +567,13 @@ local observe_enemy -- defined below with the other views; events compare enemy 
 
 ---@param prev RawState
 ---@param raw RawState
+---@return boolean
+local function we_jumped(prev, raw)
+    return prev.map ~= nil and raw.map ~= nil and prev.map.current ~= raw.map.current
+end
+
+---@param prev RawState
+---@param raw RawState
 ---@param events table[]
 local function enemy_events(prev, raw, events)
     local was, now = prev.enemy, raw.enemy
@@ -572,16 +581,17 @@ local function enemy_events(prev, raw, events)
         events[#events + 1] = { type = "enemy_appeared", class = now.class, hostile = now.hostile }
     elseif was and not was.destroyed and now and now.destroyed then
         events[#events + 1] = { type = "enemy_destroyed", class = was.class }
-    elseif was and not was.destroyed and not now then
+    elseif was and not was.destroyed and not now and not we_jumped(prev, raw) then
         events[#events + 1] = { type = "enemy_left", class = was.class }
     end
     if was and now then
         local seen = index_by(observe_enemy(prev, was).crew, "id")
         for _, c in ipairs(now.crew or {}) do
             local id = "enemy:crew:" .. c.uid
-            if c.dead and seen[id] then
-                events[#events + 1] =
-                    { type = "enemy_crew_killed", crew = ("%s (%s)"):format(id, c.name) }
+            local visible = seen[id]
+            if c.dead and visible then
+                local label = visible.name and ("%s (%s)"):format(id, visible.name) or id
+                events[#events + 1] = { type = "enemy_crew_killed", crew = label }
             end
         end
     end
@@ -640,8 +650,8 @@ local function observe_event(e)
     return { text = e.text, choices = choices, received = nonzero(e.received) }
 end
 
-local HACK_EVASION = { [1] = true, [6] = true } -- engines, piloting
-local HACK_OXYGEN = 2
+local ENGINES, OXYGEN, PILOTING = 1, 2, 6
+local HACK_EVASION = { [ENGINES] = true, [PILOTING] = true }
 
 ---Our effective Sensors level against the enemy (visible-state.md section 1.1).
 ---@param raw RawState
@@ -664,7 +674,8 @@ end
 ---@return table<integer, boolean> visible
 ---@return string hidden
 local function enemy_room_vision(raw, enemy, level)
-    local seen, hidden = {}, "needs Sensors level 2"
+    local seen = {}
+    local hidden = raw.nebula and "Sensors don't work inside a nebula" or "needs Sensors level 2"
     local rooms = index_by(enemy.rooms, "id")
     for _, c in ipairs((raw.player or {}).crew or {}) do
         if c.on_enemy_ship and not c.dead then
@@ -723,16 +734,20 @@ function observe_enemy(raw, enemy)
     end
     for i, d in ipairs(enemy.doors or {}) do
         view.doors[i] = observe_door(d, "enemy:")
+        if enemy.cloaked then
+            view.doors[i].open = nil -- unverified whether doors can be seen through a cloak
+        end
     end
     for i, s in ipairs(enemy.systems or {}) do
         local sys = observe_system(s)
-        local detailed = s.type == enemy.hacked_system or (level >= 4 and not enemy.cloaked)
+        local detailed = not enemy.cloaked and (s.type == enemy.hacked_system or level >= 4)
         view.systems[i] = detailed and sys or { id = sys.id, name = sys.name, room = sys.room }
         view.systems[i].id, view.systems[i].room = "enemy:" .. sys.id, "enemy:" .. sys.room
     end
     local detect = not enemy.cloaked and senses_lifeforms(raw)
     for _, c in ipairs(enemy.crew or {}) do
-        if not c.dead and not c.on_enemy_ship and (seen[c.room] or level >= 2 or detect) then
+        local sensed = detect and not c.drone -- Slugs and the scanner sense lifeforms only
+        if not c.dead and not c.on_enemy_ship and (seen[c.room] or level >= 2 or sensed) then
             local crew =
                 { id = "enemy:crew:" .. c.uid, race = c.species, room = "enemy:room:" .. c.room }
             if level >= 2 then
@@ -751,21 +766,21 @@ function observe_enemy(raw, enemy)
         for i, w in ipairs(enemy.weapons or {}) do
             view.weapons[i] = {
                 id = "enemy:weapon:" .. (i - 1),
-                name = w.name,
-                powered = w.powered,
+                name = w.name, -- power use is a Sensors 4 datum, so not shown at level 3
                 charge = tenths(w.charge),
                 charge_time = tenths(w.charge_time),
             }
         end
     end
-    for _, d in ipairs(enemy.drones or {}) do
+    for i, d in ipairs(enemy.drones or {}) do
         if d.deployed then
-            view.drones[#view.drones + 1] = { name = d.name }
+            view.drones[#view.drones + 1] = { id = "enemy:drone:" .. (i - 1), name = d.name }
         end
     end
-    if HACK_EVASION[enemy.hacked_system] then
+    local readout = enemy.hacking_powered and not enemy.cloaked
+    if readout and HACK_EVASION[enemy.hacked_system] then
         view.evasion = round(enemy.evasion)
-    elseif enemy.hacked_system == HACK_OXYGEN then
+    elseif readout and enemy.hacked_system == OXYGEN then
         view.oxygen = round(enemy.oxygen)
     end
     return view

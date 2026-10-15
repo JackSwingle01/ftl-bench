@@ -794,7 +794,7 @@ t.test(
             { { id = "enemy:door:0", rooms = { "enemy:room:0", "enemy:room:1" }, open = true } }
         )
         t.eq(e.systems[1], { id = "enemy:system:weapons", name = "weapons", room = "enemy:room:0" })
-        t.eq(e.drones, { { name = "Defense Drone" } })
+        t.eq(e.drones, { { id = "enemy:drone:0", name = "Defense Drone" } })
         t.eq(e.sensors_level, 1)
     end
 )
@@ -839,7 +839,6 @@ t.test("Sensors 3 shows weapons and their charge", function()
         {
             id = "enemy:weapon:0",
             name = "Basic Laser",
-            powered = true,
             charge = 3.2,
             charge_time = 10,
         },
@@ -908,6 +907,7 @@ t.test(
         t.eq(e.systems[2].power, 2)
         t.eq(e.evasion, nil)
         raw.enemy.hacked_system, raw.enemy.systems[2].type = 1, 1 -- engines
+        raw.enemy.hacking_powered = true
         t.eq(enemy_view(raw).evasion, 25)
     end
 )
@@ -960,4 +960,72 @@ t.test("boarders on our ship: the warning always, details in rooms we can see", 
     raw.player.sensors_power = 0 -- room 2 has no crew of ours: dark
     ship = V.observe(nil, raw, {}).views.state.ship
     t.eq({ ship.intruders_detected, #ship.intruders }, { true, 0 })
+end)
+
+-- #6 review: leaks that must stay closed.
+t.test("a cloak hides even the hacked system's details", function()
+    local raw = raw_with_enemy()
+    raw.enemy.cloaked, raw.enemy.hacked_system = true, 0
+    t.eq(enemy_view(raw).systems[2].power, nil)
+end)
+
+t.test("evasion and oxygen need Hacking powered, not just the drone attached", function()
+    local raw = raw_with_enemy()
+    raw.enemy.hacked_system, raw.enemy.systems[2].type, raw.enemy.hacking_powered = 1, 1, false
+    t.eq(enemy_view(raw).evasion, nil)
+    raw.enemy.hacking_powered = true
+    t.eq(enemy_view(raw).evasion, 25)
+end)
+
+t.test("an enemy crew death names the crew only at Sensors 2+", function()
+    local before, after = raw_with_enemy(), raw_with_enemy()
+    before.player.lifeform_scanner, after.player.lifeform_scanner = true, true
+    after.enemy.crew[2].dead = true
+    t.eq(events(before, after), { { type = "enemy_crew_killed", crew = "enemy:crew:202" } })
+end)
+
+t.test("Slugs and the Lifeform Scanner don't sense crew drones", function()
+    local raw = raw_with_enemy()
+    raw.player.lifeform_scanner = true
+    raw.enemy.crew[2].drone = true
+    t.eq(#enemy_view(raw).crew, 1)
+end)
+
+t.test("sensed-only intruders show race and room but not health", function()
+    local raw = raw_with_enemy()
+    raw.enemy.crew[2].on_enemy_ship, raw.enemy.crew[2].room = true, 2
+    raw.player.sensors_power, raw.player.lifeform_scanner = 0, true
+    t.eq(V.observe(nil, raw, {}).views.state.ship.intruders, {
+        { id = "enemy:crew:202", race = "mantis", room = "room:2" },
+    })
+end)
+
+t.test("at Sensors 3 enemy weapons show charge but not power", function()
+    local raw = raw_with_enemy()
+    raw.player.sensors_power = 3
+    t.eq(enemy_view(raw).weapons[1].powered, nil)
+end)
+
+t.test("a cloak hides enemy door states", function()
+    local raw = raw_with_enemy()
+    raw.enemy.cloaked = true
+    t.eq(enemy_view(raw).doors[1].open, nil)
+end)
+
+t.test("in a nebula the hidden reason says so", function()
+    local raw = raw_with_enemy()
+    raw.nebula = true
+    t.eq(enemy_view(raw).rooms[1].hidden, "Sensors don't work inside a nebula")
+end)
+
+t.test("enemy drones carry IDs", function()
+    t.eq(enemy_view(raw_with_enemy()).drones, { { id = "enemy:drone:0", name = "Defense Drone" } })
+end)
+
+t.test("no enemy_left when we are the ones who jumped away", function()
+    local before, after = raw_with_enemy(), raw_with_systems()
+    before.map, after.map =
+        { current = 0, beacons = {}, fleet = {} }, { current = 3, beacons = {}, fleet = {} }
+    t.eq(#events(before, after), 1) -- only "arrived"
+    t.eq(events(before, after)[1].type, "arrived")
 end)

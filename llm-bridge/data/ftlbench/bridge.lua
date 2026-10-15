@@ -111,32 +111,42 @@ end
 
 ---@param ship any ShipManager
 ---@return RawCrew[], table<integer, any> crew objects by uid
+---Crew owned by `owner`, wherever they are. Both ships' lists are read and split by owner, so a
+---crew member counts once whichever list the game keeps them in while boarding.
 ---@param owner integer? 0 for our crew (default), 1 for the enemy's
 local function read_crew(ship, owner)
     owner = owner or 0
     local crew, objects = {}, {}
-    for i = 0, ship.vCrewList:size() - 1 do
-        local c = ship.vCrewList[i]
-        if int(c.iShipId) == owner then
+    local lists = { ship.vCrewList }
+    local other = Hyperspace.ships[owner == 0 and "enemy" or "player"]
+    if other then
+        lists[2] = other.vCrewList
+    end
+    for _, list in ipairs(lists) do
+        for i = 0, list:size() - 1 do
+            local c = list[i]
             local uid = int(c.extend.selfId)
-            objects[uid] = c
-            local skills = {}
-            for s = 0, 5 do
-                skills[s + 1] = int(c:GetSkillLevel(s))
+            if int(c.iShipId) == owner and not objects[uid] then
+                objects[uid] = c
+                local skills = {}
+                for s = 0, 5 do
+                    skills[s + 1] = int(c:GetSkillLevel(s))
+                end
+                crew[#crew + 1] = {
+                    uid = uid,
+                    name = c:GetName(),
+                    species = c:GetSpecies(),
+                    health = c.health.first,
+                    health_max = c.health.second,
+                    room = int(c.iRoomId),
+                    on_enemy_ship = int(c.currentShipId) ~= owner, -- aboard the other ship
+                    mind_controlled = c.bMindControlled,
+                    dead = c:IsDead(),
+                    stun = c.fStunTime,
+                    drone = c:IsDrone(),
+                    skills = skills,
+                }
             end
-            crew[#crew + 1] = {
-                uid = uid,
-                name = c:GetName(),
-                species = c:GetSpecies(),
-                health = c.health.first,
-                health_max = c.health.second,
-                room = int(c.iRoomId),
-                on_enemy_ship = int(c.currentShipId) ~= owner, -- aboard the other ship
-                mind_controlled = c.bMindControlled,
-                dead = c:IsDead(),
-                stun = c.fStunTime,
-                skills = skills,
-            }
         end
     end
     return crew, objects
@@ -301,7 +311,7 @@ local function read_enemy(ship, player)
         class = ship.myBlueprint.desc.title:GetText(),
         hostile = ship._targetable.hostile,
         cloaked = ship.cloakSystem ~= nil and ship.cloakSystem.bTurnedOn,
-        flagship = ship.myBlueprint.blueprintName:find("BOSS") ~= nil,
+        flagship = ship.myBlueprint.blueprintName:find("^BOSS") ~= nil,
         destroyed = ship.bDestroyed,
         hull = int(ship.ship.hullIntegrity.first),
         hull_max = int(ship.ship.hullIntegrity.second),
@@ -317,6 +327,7 @@ local function read_enemy(ship, player)
         drones = drones,
         crew = (read_crew(ship, 1)),
         hacked_system = hacked,
+        hacking_powered = hacking ~= nil and int(hacking.powerState.first) > 0,
     }
 end
 
@@ -379,7 +390,8 @@ local function read_raw()
             hull_max = int(ship.ship.hullIntegrity.second),
             scrap = int(ship.currentScrap),
             oxygen = ship:GetOxygenPercentage(),
-            sensors_power = sensors and int(sensors.powerState.first) or 0, -- base power; manning is added by Visibility
+            -- Base power (Visibility adds the manning bonus); an ionized system gives nothing.
+            sensors_power = sensors and not sensors:Ioned(1) and int(sensors.powerState.first) or 0,
             rooms = read_rooms(ship),
         }
         doors, door_objects = read_doors(ship)
