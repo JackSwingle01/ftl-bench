@@ -1,0 +1,12 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+include = ["bin/ftl", "**/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pyright]
+include = ["bin", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Patch Hyperspace + our mod into the sandbox game copy. Close FTL first.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+GAME="$ROOT/game"
+"$GAME/ftlman/ftlman" patch -d "$GAME/FTL.app/Contents/Resources" \
+    "$GAME/ftlman/mods/Hyperspace.ftl" "$ROOT/llm-bridge"

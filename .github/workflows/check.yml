@@ -1,0 +1,29 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq lua5.3
+          mkdir -p "$HOME/bin" && cd "$HOME/bin"
+          curl -fsSL -o stylua.zip https://github.com/JohnnyMorganz/StyLua/releases/download/v2.6.0/stylua-linux-x86_64.zip
+          curl -fsSL -o selene.zip https://github.com/Kampfkarren/selene/releases/download/0.32.0/selene-0.32.0-linux.zip
+          unzip -q stylua.zip && unzip -q selene.zip && chmod +x stylua selene
+          mkdir -p "$HOME/luals" && curl -fsSL https://github.com/LuaLS/lua-language-server/releases/download/3.19.2/lua-language-server-3.19.2-linux-x64.tar.gz | tar xz -C "$HOME/luals"
+          ln -s "$HOME/luals/bin/lua-language-server" lua-language-server
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          pip install -q ruff==0.17.0 pyright==1.1.414
+
+      - run: scripts/check

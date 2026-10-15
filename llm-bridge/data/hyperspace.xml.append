@@ -1,3 +1,6 @@
 <scripts>
-    <script>data/llm_bridge.lua</script>
+    <script>data/ftlbench/json.lua</script>
+    <script>data/ftlbench/visibility.lua</script>
+    <script>data/ftlbench/commands.lua</script>
+    <script>data/ftlbench/bridge.lua</script>
 </scripts>

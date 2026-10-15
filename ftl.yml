@@ -1,0 +1,35 @@
+# Selene standard library: Hyperspace runs Lua 5.3, but the Homebrew selene build only
+# ships the Lua 5.1 base, so the 5.3 additions we use are declared here. lua-language-server
+# (runtime 5.3) type-checks the real 5.3 surface.
+base: lua51
+globals:
+  math.type:
+    args:
+      - type: any
+  math.tointeger:
+    args:
+      - type: any
+  math.maxinteger:
+    property: read-only
+  math.mininteger:
+    property: read-only
+  table.move:
+    args:
+      - type: table
+      - type: number
+      - type: number
+      - type: number
+      - required: false
+        type: table
+  utf8:
+    any: true
+  Hyperspace:
+    any: true
+  script:
+    any: true
+  Defines:
+    any: true
+  mods:
+    any: true
+  FtlBench:
+    any: true

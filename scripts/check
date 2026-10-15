@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Everything that runs without the game: format, lint, types, unit and CLI tests.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+LUA="${LUA:-$(command -v lua5.3 || echo .tools/bin/lua)}"
+
+step() { printf '\n== %s\n' "$*"; }
+
+step "stylua";             stylua --check llm-bridge tests
+step "selene";             selene --quiet llm-bridge tests
+step "lua-language-server"
+out="$(lua-language-server --check . --checklevel=Warning 2>&1)"
+grep -q "no problems found" <<<"$out" || { echo "$out"; exit 1; }
+echo "no problems found"
+step "lua tests ($LUA)";   "$LUA" tests/lua/run.lua
+step "ruff";               ruff check . && ruff format --check .
+step "pyright";            pyright bin/ftl tests
+step "cli tests";          python3 -m unittest -q tests/cli/test_cli.py
+printf '\nall checks passed\n'

@@ -3,3 +3,5 @@ downloads/
 FTL-Hyperspace/
 run/
 save-backup-*/
+.tools/
+__pycache__/

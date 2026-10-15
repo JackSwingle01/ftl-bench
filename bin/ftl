@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""ftl: the Agent's command line for a running FTL game.
+
+Reading commands print an Observation view. Everything else is a Command, passed
+as text to the mod (the only Command parser), which answers within a frame.
+Exit codes: 0 ok, 1 Command rejected, 2 game not running or not responding.
+"""
+
+import os
+import sys
+import time
+from pathlib import Path
+
+BASE = Path(
+    os.environ.get(
+        "FTL_BENCH_DIR",
+        Path.home() / "Library/Application Support/FasterThanLight/ftlbench",
+    )
+)
+LIVE = BASE / "live"
+STALE_AFTER = 3.0  # seconds without a state update before the game counts as not running
+ANSWER_TIMEOUT = 3.0  # seconds to wait for the mod to answer a Command
+USAGE = "usage: ftl state | ftl <command> [args...]   e.g. ftl pause, ftl wait 2.5"
+
+
+def fail(message: str, code: int) -> None:
+    print(message, file=sys.stderr)
+    sys.exit(code)
+
+
+def require_game() -> None:
+    state = LIVE / "state.json"
+    if not state.exists():
+        fail("game not running (no bridge files; is FTL open with the mod installed?)", 2)
+    age = time.time() - state.stat().st_mtime
+    if age > STALE_AFTER:
+        fail(f"game not running (no update from the mod for {age:.0f}s)", 2)
+
+
+def send(text: str) -> tuple[str, str]:
+    """Send Command text to the mod and return (status, reason)."""
+    cmd_id = f"{os.getpid()}-{time.time_ns()}"
+    with (LIVE / "inbox.txt").open("a") as f:
+        f.write(f"{cmd_id}\t{time.time_ns() // 1_000_000}\t{text}\n")
+    results = LIVE / "results.txt"
+    deadline = time.monotonic() + ANSWER_TIMEOUT
+    prefix = cmd_id + "\t"
+    while time.monotonic() < deadline:
+        if results.exists():
+            for line in results.read_text().splitlines():
+                if line.startswith(prefix):
+                    status, _, reason = line[len(prefix) :].partition("\t")
+                    return status, reason
+        time.sleep(0.01)
+    fail("game not responding (the mod did not answer within 3s)", 2)
+    raise AssertionError("unreachable")
+
+
+def main(args: list[str]) -> None:
+    if not args:
+        fail(USAGE, 1)
+    require_game()
+    if args == ["state"]:
+        sys.stdout.write((LIVE / "state.json").read_text())
+        return
+    status, reason = send(" ".join(args))
+    if status != "ok":
+        fail(reason, 1)
+    if args[0] == "wait":
+        time.sleep(float(args[1]))  # already validated by the mod
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
