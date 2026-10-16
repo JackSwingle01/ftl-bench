@@ -49,6 +49,7 @@ FtlBench = FtlBench or {}
 ---@field cap integer           most power it can take now (level minus damage and other limits)
 ---@field damage integer
 ---@field ion integer          ion locks on the system (0 when clear)
+---@field ion_seconds number?  time left on the current ion lock
 ---@field uses_reactor boolean  false for subsystems (piloting, doors, sensors, battery)
 
 ---@class RawWeapon
@@ -370,6 +371,13 @@ local function observe_crew(c)
     }
 end
 
+---Round to one decimal place (string.format would round 0.25 down).
+---@param n number
+---@return number
+local function tenths(n)
+    return math.floor(n * 10 + 0.5) / 10
+end
+
 ---@param s RawSystem
 local function observe_system(s)
     local name = SYSTEM_NAMES[s.type + 1]
@@ -382,16 +390,11 @@ local function observe_system(s)
         level = s.level,
         damage = s.damage,
         ion = s.ion,
+        ion_seconds = s.ion > 0 and s.ion_seconds and tenths(s.ion_seconds) or nil,
         subsystem = not s.uses_reactor,
     }
 end
 
----Round to one decimal place (string.format would round 0.25 down).
----@param n number
----@return number
-local function tenths(n)
-    return math.floor(n * 10 + 0.5) / 10
-end
 Visibility.tenths = tenths
 
 ---@param ship RawShip

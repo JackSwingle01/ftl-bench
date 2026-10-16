@@ -213,6 +213,7 @@ local function read_systems(ship)
             cap = math.min(int(y:GetPowerCap()), int(y.healthState.first)),
             damage = int(y.healthState.second - y.healthState.first),
             ion = math.max(int(y.iLockCount), 0),
+            ion_seconds = y.lockTimer.currGoal - y.lockTimer.currTime, -- the icon's blue bar
             uses_reactor = y.bNeedsPower,
         }
     end

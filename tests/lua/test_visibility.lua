@@ -1299,6 +1299,16 @@ t.test("a hazard beacon shows the text under its first hazard icon", function()
     t.eq(warnings(), { "DANGER!" })
 end)
 
+t.test(
+    "an ionized system shows how long its ion lock lasts, as the blue bar on its icon does",
+    function()
+        local raw = raw_with_systems()
+        raw.player.systems[3].ion_seconds = 3.46 -- system type 3 has ion = 2 in this fixture
+        local systems = V.observe(nil, raw, {}).views.state.ship.systems
+        t.eq({ systems[3].ion, systems[3].ion_seconds, systems[1].ion_seconds }, { 2, 3.5, nil })
+    end
+)
+
 -- #12: store and upgrades.
 ---@return RawState
 local function raw_at_store()
