@@ -343,7 +343,6 @@ local pending_moves = {}
 
 local SHOW_GRACE_FRAMES = 5
 local pending_window, pending_frames, refused_window = nil, 0, nil
-local pressed_window = nil -- the window our last `show` key press was for
 
 ---The game window open over the ship view, read from the windows themselves (an event box sets
 ---the same menu pause, so that pause alone can't tell them apart).
@@ -358,10 +357,8 @@ local function game_window()
         return "map"
     elseif store and store.bOpen then
         return "store"
-    elseif pressed_window == "upgrades" and app.gui.menu_pause and not app.gui.choiceBoxOpen then
-        -- The upgrades tab's own open flag stays false (its ship-info window isn't bound), so go by
-        -- the window pause after our key press.
-        return "upgrades"
+    elseif app.gui.shipScreens.bOpen then
+        return "upgrades" -- the ship-info window, which opens on its upgrades tab
     end
     return nil
 end
@@ -576,9 +573,6 @@ local function read_raw()
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
         raw.window = game_window()
-        if not pending_window and not gui.menu_pause then
-            pressed_window = nil -- that window has closed
-        end
         if pending_window and raw.window == pending_window then
             pending_window = nil
         elseif pending_window and pending_frames > 0 then
@@ -703,7 +697,7 @@ local function execute(cmd)
         -- Escape closes the window the way a player does, clearing the game's window pause too
         -- (Store:Close() alone left it set). Commands only allows this while a window is open.
         press(KEY_ESCAPE)
-        pending_window, pressed_window = nil, nil
+        pending_window = nil
     elseif cmd.kind == "cloak" or cmd.kind == "battery" then
         local ship = Hyperspace.ships.player
         local sys = cmd.kind == "cloak" and ship.cloakSystem or ship.batterySystem
@@ -750,7 +744,6 @@ local function execute(cmd)
             end
             press(keys[cmd.window])
             pending_window, pending_frames, refused_window = cmd.window, SHOW_GRACE_FRAMES, nil
-            pressed_window = cmd.window
         end
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
@@ -760,6 +753,11 @@ local function execute(cmd)
     elseif cmd.kind == "jump" then
         -- The game travels on its next update, as when the player clicks a beacon on the map.
         local sm = Hyperspace.App.world.starMap
+        if sm.bOpen then
+            -- Close the map first: the game froze in StarMap::OnRender when it rendered an open map
+            -- with travel set this way (#21).
+            press(KEY_ESCAPE)
+        end
         sm.potentialLoc = sm.locations[cmd.beacon]
         sm.readyToTravel = true
     elseif cmd.kind == "jump_sector" then
@@ -1011,6 +1009,7 @@ local function tick()
                 run_dir .. "/score.json",
                 Json.encode({
                     score = state.score,
+                    seed = int(Hyperspace.Global.currentSeed),
                     sector = state.sector,
                     victory = state.victory,
                     frame = raw.frame,
@@ -1040,6 +1039,19 @@ script.on_init(function()
 end)
 
 local failed = false
+-- A Run's Seed: ftlbench/run_seed (one number) fixes the seed of the next New Game.
+script.on_internal_event(Defines.InternalEvents.GET_RUN_SEED, function(isCustomSeed, seed)
+    local f = io.open("ftlbench/run_seed", "r")
+    local wanted = f and tonumber(f:read("l"))
+    if f then
+        f:close()
+    end
+    if wanted then
+        return true, math.tointeger(wanted)
+    end
+    return isCustomSeed, seed
+end)
+
 script.on_internal_event(Defines.InternalEvents.ON_TICK, function()
     local ok, err = pcall(tick)
     if not ok and not failed then
