@@ -1008,24 +1008,26 @@ function Visibility.jump_blocker(raw)
         return "an event is open"
     elseif (ship.fuel or 0) < 1 then
         return "no fuel"
-    elseif (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1) then
-        local systems = index_by(ship.systems, "type")
-        local piloting, engines = systems[6], systems[1]
-        -- The drive charges only with both systems running (damage and ion both take power away).
-        if piloting and piloting.power < 1 then
-            return "Piloting has no power (the FTL drive needs it to charge)"
-        elseif engines and engines.power < 1 then
-            return "Engines have no power (the FTL drive needs them to charge)"
-        elseif piloting then -- at every level: the autopilot only dodges (wiki Piloting)
-            local manned = false
-            for _, c in ipairs(ship.crew or {}) do
-                local able = not (c.dead or c.drone or c.mind_controlled or (c.stun or 0) > 0)
-                manned = manned or (c.room == piloting.room and not c.on_enemy_ship and able)
-            end
-            if not manned then
-                return "Piloting is unmanned (the FTL drive charges only with a pilot)"
-            end
+    end
+    local systems = index_by(ship.systems, "type")
+    local piloting, engines = systems[6], systems[1]
+    local charging = (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1)
+    -- The drive charges only with both systems running (damage and ion both take power away).
+    if charging and piloting and piloting.power < 1 then
+        return "Piloting has no power (the FTL drive needs it to charge)"
+    elseif charging and engines and engines.power < 1 then
+        return "Engines have no power (the FTL drive needs them to charge)"
+    elseif piloting then -- to charge and to jump, at every level: the autopilot only dodges (wiki)
+        local manned = false
+        for _, c in ipairs(ship.crew or {}) do
+            local able = not (c.dead or c.drone or c.mind_controlled or (c.stun or 0) > 0)
+            manned = manned or (c.room == piloting.room and not c.on_enemy_ship and able)
         end
+        if not manned then
+            return "Piloting is unmanned (the FTL drive needs a pilot to charge and to jump)"
+        end
+    end
+    if charging then
         return ("FTL drive charging (%.1f of %.1f)"):format(
             tenths(ship.ftl_charge or 0),
             tenths(ship.ftl_charge_time or 1)

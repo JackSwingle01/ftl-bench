@@ -343,12 +343,12 @@ local function read_event(gui)
     return { text = box.mainText, choices = choices, received = read_resources(box.rewards) }
 end
 
--- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
--- The game opens a window a frame or so after its key press, so a `show` waits a few frames
--- (pending) before counting the window as refused (the game won't open some mid-fight).
 -- Accepted moves by crew uid, until the crew member arrives (or command_failed reports it).
 local pending_moves = {}
 
+-- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
+-- The game opens a window a frame or so after its key press, so a `show` waits a few frames
+-- (pending) before counting the window as refused (the game won't open some mid-fight).
 local SHOW_GRACE_FRAMES = 5
 -- The window a `show` pressed for until it opens (pending), and the last one the game refused.
 local shown = { pending = nil, frames = 0, refused = nil }
@@ -1222,7 +1222,7 @@ local function tick()
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
-    if raw.in_run and frame % 30 == 0 then -- system status changes; twice a second is plenty
+    if raw.in_run and frame % 30 == 1 then -- the Run's first frame, then twice a second
         write_atomic(LIVE .. "/help.json", Json.encode(help_texts(raw)))
     elseif not raw.in_run then
         os.remove(LIVE .. "/help.json")
@@ -1266,6 +1266,7 @@ os.remove(LIVE .. "/run.txt") -- no Run until on_init says so
 
 script.on_init(function()
     frame, game_time, prev = 0, 0.0, nil
+    pending_moves = {} -- a new Run's clock starts over, and its crew uids can repeat
     health_seen, last_drop = {}, {}
     local name = "runs/" .. os.date("%Y%m%d-%H%M%S")
     run_dir = BASE .. "/" .. name
@@ -1275,9 +1276,13 @@ script.on_init(function()
 end)
 
 local failed = false
--- A Run's Seed: ftlbench/run_seed (one number) fixes the seed of the next New Game.
+-- A Run's Seed: ftlbench/run_seed (one number) fixes the seed of the next New Game, in a dev build
+-- only, so a file left behind by scripts/dev-run can never fix the Seed of a scored Run.
 script.on_internal_event(Defines.InternalEvents.GET_RUN_SEED, function(isCustomSeed, seed)
-    local f = io.open("ftlbench/run_seed", "r")
+    if not FtlBench.dev_probe then
+        return isCustomSeed, seed
+    end
+    local f = io.open(BASE .. "/run_seed", "r")
     local wanted = f and tonumber(f:read("l"))
     if f then
         f:close()

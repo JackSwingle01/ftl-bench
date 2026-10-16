@@ -598,6 +598,16 @@ t.test("the drive can't charge with nobody in Piloting, at any level", function(
 end)
 
 t.test(
+    "a charged drive still can't jump with nobody in Piloting (wiki: crew make the jump)",
+    function()
+        local raw = raw_with_map()
+        raw.player.ftl_charge, raw.player.ftl_charge_time = 1, 1 -- fully charged
+        raw.player.crew[1].room = 1 -- Maria leaves the piloting room
+        t.eq(map_view(raw).drive.not_ready, "Piloting is unmanned")
+    end
+)
+
+t.test(
     "stunned or mind-controlled crew and crew drones don't count as a pilot (wiki Piloting)",
     function()
         for _, field in ipairs({ "stun", "mind_controlled", "drone" }) do
