@@ -65,6 +65,8 @@ FtlBench = FtlBench or {}
 ---@field name string
 ---@field powered boolean
 ---@field deployed boolean
+---@field power integer   reactor power needed
+---@field type string    the game's drone type, e.g. "COMBAT", "BOARDER", "DEFENSE"
 
 ---@class RawShip
 ---@field hull integer
@@ -77,6 +79,8 @@ FtlBench = FtlBench or {}
 ---@field crew RawCrew[]?         own crew only (for the enemy: its crew; on_enemy_ship = aboard our ship)
 ---@field sensors_manned boolean?
 ---@field lifeform_scanner boolean?
+---@field clone_queue integer?    dead crew waiting in the clone bay's queue
+---@field backup_dna boolean?     the Backup DNA Bank augment (crew keep without a working clone bay)
 ---@field reactor { used: integer, max: integer }?
 ---@field systems RawSystem[]?
 ---@field augments string[]? names, as the ship screen shows them
@@ -154,6 +158,7 @@ FtlBench = FtlBench or {}
 ---@field window string?    "map", "upgrades" or "store" while the Agent has that window open
 ---@field refused_window string?  a window the game last refused to open for `show`
 ---@field nebula boolean?
+---@field hazards { asteroids: boolean, sun: boolean, pulsar: boolean, pds: boolean, pds_target: integer }?  hazard icons; pds_target 0 us, 1 the enemy (allied ASB), 2 both
 ---@field sector integer?     1-8, shown on the HUD
 ---@field game_over boolean?
 ---@field victory boolean?
@@ -162,7 +167,7 @@ FtlBench = FtlBench or {}
 ---@field map RawMap?
 ---@field event RawEvent?    the open event window, if any
 ---@field enemy RawEnemy?
----@field texts table<string, string>? game text by name (the warning banners)
+---@field texts table<string, string>? game text by name (warning banners and refusals)
 ---@field boarders RawCrew[]? enemy crew aboard our ship after their ship has gone
 ---@field autofire boolean?
 ---@field store { open: boolean, items: RawStoreItem[] }?  the store at this beacon, if any
@@ -1078,6 +1083,28 @@ local function observe_map(raw, map)
     return { sector = raw.sector, beacons = beacons, sectors = sectors, drive = drive_status(raw) }
 end
 
+---The game's text by name (text_misc.xml warning_*) on one line; the name when the bridge has none.
+---@param raw RawState
+---@param name string
+---@return string
+function Visibility.text(raw, name)
+    return (((raw.texts or {})[name] or name):gsub("\\n", " "):gsub("%s*\n%s*", " "))
+end
+
+---The text under the hazard icons: the first icon's (asteroids, sun, pulsar, ASB, nebula), as the
+---game picks it. Nil at a beacon with no hazard.
+---@param raw RawState
+---@return string?
+local function hazard_text(raw)
+    local hz = raw.hazards or {}
+    if hz.pds and not (hz.asteroids or hz.sun or hz.pulsar) and (hz.pds_target or 0) ~= 0 then
+        return hz.pds_target == 1 and "warning_pds_allies" or "warning_pds_all"
+    elseif hz.asteroids or hz.sun or hz.pulsar or hz.pds or raw.nebula then
+        return "warning_environment_danger"
+    end
+    return nil
+end
+
 ---The game's red WARNING banners that are up now, in its own words (text_misc.xml; the conditions
 ---are its own notes there). Nil when none is up.
 ---@param raw RawState
@@ -1085,9 +1112,10 @@ end
 ---@return string[]?
 local function warnings(raw, ship)
     local p = raw.player --[[@as RawShip]]
-    local texts, out = raw.texts or {}, nil
+    local out = nil
     local systems = index_by(p.systems or {}, "type")
-    local shields, engines = systems[0], systems[1]
+    local shields, engines, clonebay = systems[0], systems[1], systems[13]
+    local hazard = hazard_text(raw)
     local hull = p.hull / math.max(p.hull_max, 1)
     for _, w in ipairs({
         { hull <= 0.25, "warning_hull_25" }, -- the worst hull banner only
@@ -1100,11 +1128,17 @@ local function warnings(raw, ship)
         { (p.oxygen or 100) < 25, "warning_oxygen" },
         { ship.intruders_detected, "warning_intruders" },
         { engines and engines.damage >= engines.level, "warning_engine" },
+        { -- the clone bay box's banner: a dead crew member will be lost without power
+            clonebay and clonebay.power < 1 and (p.clone_queue or 0) > 0 and not p.backup_dna,
+            "warning_clone_off_1",
+            "warning_clone_off_2",
+        },
+        { hazard, hazard },
     }) do
         if w[1] then
             out = out or setmetatable({}, LIST)
-            local text = (texts[w[2]] or w[2]):gsub("\\n", " "):gsub("%s*\n%s*", " ") -- banner lines
-            out[#out + 1] = text
+            local text = Visibility.text(raw, w[2])
+            out[#out + 1] = w[3] and text .. " " .. Visibility.text(raw, w[3]) or text
         end
     end
     return out

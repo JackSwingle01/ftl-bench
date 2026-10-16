@@ -43,6 +43,15 @@ local WINDOW_SAFE = {
 -- More Commands that work from inside one particular window, as a player uses it.
 local ALLOWED_IN = { map = { jump = true } }
 
+---A refusal the game shows in red text of its own (text_misc.xml warning_*), then our detail.
+---@param raw RawState
+---@param name string the game's text name
+---@param detail string
+---@return string
+local function refused(raw, name, detail)
+    return FtlBench.Visibility.text(raw, name) .. ": " .. detail
+end
+
 ---Why `buy` or `upgrade` can't use its window, or nil when it is open.
 ---@param raw RawState
 ---@param window string "store" or "upgrades"
@@ -51,9 +60,13 @@ local function window_needed(raw, window)
     if raw.window == window then
         return nil
     elseif raw.refused_window == window then
-        return ("the game would not open the %s window just now (it refuses during some fights, "):format(
-            window
-        ) .. "e.g. with intruders aboard)"
+        return refused(
+            raw,
+            "warning_in_danger",
+            ("the game would not open the %s window just now (it refuses during some fights, "):format(
+                window
+            ) .. "e.g. with intruders aboard)"
+        )
     end
     return ("the %s window isn't open; run ftl %s first"):format(window, window)
 end
@@ -162,12 +175,60 @@ local function plan_power(args, raw)
     elseif sys.power + delta < 0 then
         return nil, ("%s has only %d power"):format(id, sys.power)
     elseif sys.power + delta > sys.cap then
-        return nil, ("%s can take at most %d power (has %d)"):format(id, sys.cap, sys.power)
+        local detail = ("%s can take at most %d power (has %d)"):format(id, sys.cap, sys.power)
+        if type == SHIELDS and sys.cap == sys.level and sys.power + delta == sys.cap + 1 then
+            return nil, refused(raw, "warning_needs_upgrade", detail) -- the odd level's last bar
+        end
+        return nil, detail
     elseif delta > free_reactor(raw) then
-        return nil, ("%s needs %d reactor power (%d free)"):format(id, delta, free_reactor(raw))
+        return nil,
+            refused(
+                raw,
+                "warning_no_power",
+                ("%s needs %d reactor power (%d free)"):format(id, delta, free_reactor(raw))
+            )
     end
     return { kind = "power", system = type, delta = delta }
 end
+
+---Why the game won't power this weapon or drone, in its words, or nil when it can.
+---@param raw RawState
+---@param type integer the weapons or drones system
+---@param label string
+---@param need integer power it takes
+---@return string?
+local function armament_power(raw, type, label, need)
+    local sys = find_system(raw, type)
+    local room = sys and (sys.cap - sys.power) or 0
+    local detail = ("%s needs %d power"):format(label, need)
+    if need > room then
+        local why = "warning_no_system_power" -- it would fit alone; others use the power
+        if not sys or need > sys.level then
+            why = "warning_needs_upgrade"
+        elseif need > sys.cap then
+            why = "warning_system_broken" -- damage took the bars it needs
+        end
+        return refused(
+            raw,
+            why,
+            ("%s; %s has room for %d more"):format(
+                detail,
+                FtlBench.Visibility.system_id(type),
+                room
+            )
+        )
+    elseif need > free_reactor(raw) then
+        return refused(
+            raw,
+            "warning_no_power",
+            ("%s; %d reactor power free"):format(detail, free_reactor(raw))
+        )
+    end
+    return nil
+end
+
+-- Drone types that work on the enemy ship, so the game won't launch them without one.
+local ENEMY_DRONES = { COMBAT = true, BOARDER = true }
 
 ---weapon <weapon> on|off and drone <drone> on|off.
 ---@param kind "weapon"|"drone"
@@ -189,25 +250,23 @@ local function plan_armament(kind, args, raw)
         return nil, ("no %s:%d"):format(kind, slot)
     end
     if state == "on" and not item.powered then
-        local sys = find_system(raw, kind == "weapon" and WEAPONS or DRONES)
+        local type = kind == "weapon" and WEAPONS or DRONES
+        local sys = find_system(raw, type)
+        local label = ("%s:%d (%s)"):format(kind, slot, item.name)
         if sys and sys.ion > 0 then
-            return nil, locked(FtlBench.Visibility.system_id(sys.type))
+            return nil, locked(FtlBench.Visibility.system_id(type))
+        elseif kind == "drone" and raw.player.drone_parts == 0 then
+            return nil, refused(raw, "warning_no_drones", label .. " needs a drone part; none left")
+        elseif kind == "drone" and ENEMY_DRONES[item.type] and not raw.enemy then
+            return nil, refused(raw, "warning_no_enemy_ship", label .. " works on an enemy ship")
+        elseif kind == "weapon" and item.missiles and (raw.player.missiles or 0) == 0 then
+            return nil, refused(raw, "warning_no_missiles", label .. " needs a missile; none left")
+        end
+        local err = armament_power(raw, type, label, item.power)
+        if err then
+            return nil, err
         end
     end
-    if kind == "drone" and state == "on" and not item.powered and raw.player.drone_parts == 0 then
-        return nil, ("drone:%d (%s) needs a drone part; none left"):format(slot, item.name)
-    end
-    if kind == "weapon" and state == "on" and not item.powered then
-        local label = ("weapon:%d (%s) needs %d power"):format(slot, item.name, item.power)
-        local sys = find_system(raw, WEAPONS)
-        local room = sys and (sys.cap - sys.power) or 0
-        if item.power > room then
-            return nil, ("%s; system:weapons has room for %d more"):format(label, room)
-        elseif item.power > free_reactor(raw) then
-            return nil, ("%s; %d reactor power free"):format(label, free_reactor(raw))
-        end
-    end
-    -- ponytail: drone power needs are not in raw state yet; the game refuses if it can't.
     return { kind = kind, slot = slot, on = state == "on" }
 end
 
@@ -363,7 +422,6 @@ local function ability(raw, name)
     return (raw.player.abilities or {})[name] or {}
 end
 
----Wording follows the game's own refusals (text_misc.xml warning_super_shield_*).
 ---@param raw RawState
 ---@return boolean
 local function zoltan_up(raw)
@@ -404,13 +462,13 @@ local ability_handlers = {
         if #args ~= 1 or not room or not enemy then
             return nil, "usage: hack <enemy:room> (launch the drone) | hack (start the pulse)"
         elseif not raw.enemy then
-            return nil, "there is no enemy ship to hack"
+            return nil, refused(raw, "warning_no_enemy_ship", "there is no enemy ship to hack")
         elseif zoltan_up(raw) then
-            return nil, "super shields prevent hacking (enemy shields.zoltan)"
+            return nil, refused(raw, "warning_super_shield_hacking", "enemy shields.zoltan is up")
         elseif ability(raw, "hacking").launched then
             return nil, "a hacking drone is already out"
         elseif (raw.player.drone_parts or 0) < 1 then
-            return nil, "no drone parts to build a hacking drone"
+            return nil, refused(raw, "warning_no_drones", "no drone parts to build a hacking drone")
         end
         for _, s in ipairs(raw.enemy.systems or {}) do
             if s.room == room then
@@ -428,7 +486,7 @@ local ability_handlers = {
         if #args ~= 1 or not uid or not enemy then
             return nil, "usage: mindcontrol <enemy:crew>"
         elseif zoltan_up(raw) then
-            return nil, "super shields block mind control (enemy shields.zoltan)"
+            return nil, refused(raw, "warning_super_shield_mind", "enemy shields.zoltan is up")
         end
         for _, c in ipairs((FtlBench.Visibility.enemy_view(raw) or {}).crew or {}) do
             if c.id == "enemy:crew:" .. uid then
@@ -451,7 +509,8 @@ local ability_handlers = {
         elseif not raw.enemy or not raw.enemy.rooms[room + 1] then
             return nil, "no enemy:room:" .. room
         elseif command == 1 and zoltan_up(raw) then -- unverified whether it also blocks return
-            return nil, "super shields prevent teleporting (enemy shields.zoltan)"
+            return nil,
+                refused(raw, "warning_super_shield_teleporter", "enemy shields.zoltan is up")
         end
         -- Send takes whoever stands on the pad; return brings back our crew from that enemy room.
         local from, aboard = command == 1 and pad.room or room, command == 2

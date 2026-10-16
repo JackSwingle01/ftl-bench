@@ -47,7 +47,9 @@ You only see what a human player could see on screen. Anything else is left out 
 ## Acting
 
 Every Command takes effect immediately. It prints nothing and exits 0 when it works, and prints the
-reason and exits non-zero when it does not, so `&&` chains stop at the first failure.
+reason and exits non-zero when it does not, so `&&` chains stop at the first failure. When the
+game itself would flash a red refusal, the reason starts with its text, e.g.
+`NOT ENOUGH POWER: weapon:1 (Burst Laser Mark II) needs 2 power; 1 reactor power free`.
 
 - Time: `pause`, `unpause`, `wait <seconds>`
 - Power: `power <system> +N|-N`, `weapon <weapon> on|off`, `drone <drone> on|off`

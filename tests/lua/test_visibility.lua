@@ -310,7 +310,9 @@ local function raw_with_systems()
             missiles = false,
         },
     }
-    ship.drones = { { name = "Defense Drone I", powered = true, deployed = false } }
+    ship.drones = {
+        { name = "Defense Drone I", powered = true, deployed = false, power = 1, type = "DEFENSE" },
+    }
     return raw
 end
 
@@ -819,7 +821,15 @@ local function raw_with_enemy()
                 missiles = false,
             },
         },
-        drones = { { name = "Defense Drone", powered = true, deployed = true } },
+        drones = {
+            {
+                name = "Defense Drone",
+                powered = true,
+                deployed = true,
+                power = 1,
+                type = "DEFENSE",
+            },
+        },
         crew = {
             {
                 uid = 201,
@@ -1245,6 +1255,48 @@ t.test("each warning has its own condition", function()
         uses_reactor = true,
     }
     t.eq(warnings(), { "warning_engine" })
+end)
+
+t.test("an unpowered clone bay with dead crew waiting shows its two-line banner", function()
+    local raw = raw_with_systems()
+    raw.texts = { warning_clone_off_1 = "CLONEBAY OFF", warning_clone_off_2 = "CREW ARE DYING!" }
+    local clonebay = {
+        type = 13,
+        room = 3,
+        power = 1,
+        level = 1,
+        cap = 1,
+        damage = 0,
+        ion = 0,
+        uses_reactor = true,
+    }
+    raw.player.systems[#raw.player.systems + 1] = clonebay
+    raw.player.clone_queue = 1
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil) -- powered: cloning goes on
+    clonebay.power = 0
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, { "CLONEBAY OFF CREW ARE DYING!" })
+    raw.player.backup_dna = true -- the augment keeps them
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil)
+    raw.player.backup_dna, raw.player.clone_queue = false, 0
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil)
+end)
+
+t.test("a hazard beacon shows the text under its first hazard icon", function()
+    local raw = raw_with_systems()
+    raw.texts = { warning_environment_danger = "DANGER!", warning_pds_allies = "ALLIES!" }
+    local function warnings()
+        return V.observe(nil, raw, {}).views.state.warnings
+    end
+    raw.hazards = { asteroids = false, sun = false, pulsar = false, pds = true, pds_target = 0 }
+    t.eq(warnings(), { "DANGER!" }) -- an ASB aimed at us
+    raw.hazards.pds_target = 1
+    t.eq(warnings(), { "ALLIES!" }) -- aimed at the enemy
+    raw.hazards.sun = true
+    t.eq(warnings(), { "DANGER!" }) -- the sun's icon comes first
+    raw.hazards = { asteroids = false, sun = false, pulsar = false, pds = false, pds_target = 0 }
+    t.eq(warnings(), nil)
+    raw.nebula = true
+    t.eq(warnings(), { "DANGER!" })
 end)
 
 -- #12: store and upgrades.

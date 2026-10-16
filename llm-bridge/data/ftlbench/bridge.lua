@@ -242,7 +242,13 @@ local function read_armaments(ship)
     for i = 0, list:size() - 1 do
         local d = list[i]
         drone_objs[#drone_objs + 1] = d
-        drones[#drones + 1] = { name = d:GetName(), powered = d.powered, deployed = d.deployed }
+        drones[#drones + 1] = {
+            name = d:GetName(),
+            powered = d.powered,
+            deployed = d.deployed,
+            power = int(d.blueprint.power),
+            type = d.blueprint.typeName,
+        }
     end
     return weapons, drones, weapon_objs, drone_objs
 end
@@ -433,7 +439,7 @@ local function mark_damage(crew)
     end
 end
 
-local WARNINGS = {
+local WARNINGS = { -- banners and the action refusals our Command errors share
     "warning_hull_75",
     "warning_hull_50",
     "warning_hull_25",
@@ -441,10 +447,26 @@ local WARNINGS = {
     "warning_oxygen",
     "warning_intruders",
     "warning_engine",
+    "warning_clone_off_1",
+    "warning_clone_off_2",
+    "warning_environment_danger",
+    "warning_pds_allies",
+    "warning_pds_all",
+    "warning_in_danger",
+    "warning_no_missiles",
+    "warning_no_drones",
+    "warning_no_enemy_ship",
+    "warning_no_power",
+    "warning_system_broken",
+    "warning_needs_upgrade",
+    "warning_no_system_power",
+    "warning_super_shield_mind",
+    "warning_super_shield_hacking",
+    "warning_super_shield_teleporter",
 }
 local warning_text_cache
 
----The warning banners' text, from the game's text library (read once).
+---The warning texts, from the game's text library (read once).
 ---@return table<string, string>
 local function warning_texts()
     if not warning_text_cache then
@@ -676,7 +698,15 @@ local function read_raw()
     if in_run then
         local sensors = ship:GetSystem(SENSORS)
         local doors
-        raw.nebula = app.world.space.bNebula
+        local space = app.world.space
+        raw.nebula = space.bNebula
+        raw.hazards = { -- the hazard icons at the top of the screen
+            asteroids = space.asteroidGenerator.bRunning,
+            sun = space.sunLevel,
+            pulsar = space.pulsarLevel,
+            pds = space.bPDS,
+            pds_target = int(space.envTarget),
+        }
         raw.sector = int(app.world.starMap.worldLevel) + 1
         raw.game_over = gui.gameover
         -- alreadyWon is set the moment the Flagship dies; bVictory once the end screen opens.
@@ -721,6 +751,8 @@ local function read_raw()
         p.ftl_charge, p.ftl_charge_time = ship.jump_timer.first, ship.jump_timer.second
         p.sensors_manned = sensors ~= nil and int(sensors.iActiveManned) > 0
         p.lifeform_scanner = has_augment(ship, "LIFE_SCANNER")
+        p.clone_queue = int(Hyperspace.CrewFactory:GetCloneReadyList(true):size())
+        p.backup_dna = has_augment(ship, "BACKUP_DNA")
         local enemy = Hyperspace.ships.enemy
         raw.enemy = enemy and read_enemy(enemy, ship) or nil
         raw.autofire = gui.combatControl.weapControl.autoFiring
