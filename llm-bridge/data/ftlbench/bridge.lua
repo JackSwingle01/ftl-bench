@@ -978,6 +978,7 @@ local function tick()
             w.autoFiring = raw.autofire
         end
         frame = frame + 1
+        FtlBench.frame = frame -- for the dev replayer
         if not Visibility.is_paused(raw) then
             game_time = game_time + Hyperspace.FPS.SpeedFactor / 16
         end
