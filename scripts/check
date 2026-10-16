@@ -14,6 +14,6 @@ grep -q "no problems found" <<<"$out" || { echo "$out"; exit 1; }
 echo "no problems found"
 step "lua tests ($LUA)";   "$LUA" tests/lua/run.lua
 step "ruff";               ruff check .; ruff format --check .
-step "pyright";            pyright bin/ftl tests
+step "pyright";            pyright bin/ftl scripts/determinism-check tests
 step "cli tests";          python3 -m unittest -q tests/cli/test_cli.py
 printf '\nall checks passed\n'

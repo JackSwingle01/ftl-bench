@@ -1,0 +1,5 @@
+# Replay plays back the logs; a Seed fixes content, not combat
+
+A Replay shows a Run from its logged Observations, events and Action log; it does not re-run the game. The determinism check (`scripts/determinism-check`, #15) started the same Seed twice and fed run A's Action log to run B at the same bridge frames. Every Command landed on the same frame, and the content matched: the same sector map, beacon events, event text and enemy ships. Timing did not: events drifted by 1 to 6 frames, and once a fight started the logs diverged (seed 1: 20 events against 17; seed 7: the first shield block at frame 1205 against 1211). FTL advances its simulation by each frame's real duration (`SpeedFactor`), so frame-exact replay can't reproduce combat. Re-running would only work with a fixed timestep, which changes how the game plays against the wall clock.
+
+So a Seed still does its job for the benchmark: every model faces the same sectors, beacons, events and enemies. It does not make two Runs identical once they fight.

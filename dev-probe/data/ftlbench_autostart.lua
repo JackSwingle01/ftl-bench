@@ -1,6 +1,7 @@
 -- DEVELOPMENT ONLY: presses main-menu buttons so scripts/dev-run needs no clicking.
--- Reads ftlbench/autostart ("continue" or "new"), acts once per game launch. After "new" it
--- also answers the intro event, which would otherwise keep the game paused.
+-- Reads ftlbench/autostart ("continue", "new" or "fresh"), acts once per game launch. After "new"
+-- it also answers the intro event, which would otherwise keep the game paused; "fresh" leaves it
+-- for the caller, so its answer lands in the Action log (the determinism check needs that).
 -- Uses the in-game input bindings from our Hyperspace fork.
 
 local done, ticks, clicks = false, 0, 0

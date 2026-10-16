@@ -1,9 +1,25 @@
 local t = ...
 local C = FtlBench.Commands
 
+-- The game's refusal texts as its text library gives them (text_misc.xml), line breaks and all.
+local TEXTS = {
+    warning_in_danger = "IN DANGER",
+    warning_no_missiles = "NO MISSILES",
+    warning_no_drones = "NO DRONES",
+    warning_no_enemy_ship = "NO\nENEMY\nSHIP",
+    warning_no_power = "NOT\nENOUGH\nPOWER",
+    warning_system_broken = "SYSTEM\nBROKEN",
+    warning_needs_upgrade = "REQUIRES\nSYSTEM\nUPGRADE",
+    warning_no_system_power = "NOT ENOUGH\nSYSTEM POWER",
+    warning_super_shield_mind = "SUPER\nSHIELDS\nBLOCK MIND\nCONTROL",
+    warning_super_shield_hacking = "SUPER\nSHIELDS\nPREVENT\nHACKING",
+    warning_super_shield_teleporter = "SUPER\nSHIELDS\nPREVENT\nTELEPORTING",
+}
+
 ---@return RawState
 local function raw_in_run()
     return {
+        texts = TEXTS,
         in_run = true,
         frame = 10,
         game_time = 1,
@@ -42,6 +58,12 @@ t.test("Commands need a Run in progress", function()
     local raw = raw_in_run()
     raw.in_run = false
     t.eq(select(2, C.plan("pause", raw)), "no Run in progress")
+end)
+
+t.test("Commands are refused once the Run is over, even with the game-over screen up", function()
+    local raw = raw_in_run()
+    raw.game_over, raw.pause.menu = true, true
+    t.eq(select(2, C.plan("close", raw)), "the Run is over (see game_over in ftl state)")
 end)
 
 t.test("unpause is refused while an event is open", function()
@@ -181,6 +203,29 @@ t.test("door needs a working door system", function()
     t.eq(C.plan("door door:1 open", raw), { kind = "door", doors = { 1 }, open = true })
 end)
 
+-- #16: a move the game accepted but the crew member never finished.
+t.test("a move not finished within 30 game seconds becomes a command_failed event", function()
+    local raw = raw_with_interior()
+    local moves = { [101] = { room = 2, enemy = false, at = 10, command = "move crew:101 room:2" } }
+    t.eq(C.failed_moves(moves, raw, 39), {})
+    t.eq(C.failed_moves(moves, raw, 41), {
+        {
+            type = "command_failed",
+            command = "move crew:101 room:2",
+            reason = "crew:101 (Maria) did not reach room:2 within 30s",
+        },
+    })
+    t.eq(moves, {}) -- reported once
+end)
+
+t.test("an arrived move is forgotten without an event", function()
+    local raw = raw_with_interior()
+    raw.player.crew[1].room = 2
+    local moves = { [101] = { room = 2, enemy = false, at = 10, command = "move crew:101 room:2" } }
+    t.eq(C.failed_moves(moves, raw, 100), {})
+    t.eq(moves, {})
+end)
+
 -- #4: power, weapon, drone. Reactor 5 of 8 used (3 free).
 -- Systems: shields 2/2, piloting (subsystem), weapons 1 power with cap 3, engines ionized 1/2, drones 1/2.
 local function raw_with_systems()
@@ -265,7 +310,9 @@ local function raw_with_systems()
             missiles = false,
         },
     }
-    ship.drones = { { name = "Defense Drone I", powered = true, deployed = true } }
+    ship.drones = {
+        { name = "Defense Drone I", powered = true, deployed = true, power = 1, type = "DEFENSE" },
+    }
     return raw
 end
 
@@ -293,7 +340,17 @@ t.test("power respects free reactor power and the system's cap", function()
     raw.player.reactor.used = 7
     t.eq(
         select(2, C.plan("power shields +2", raw)),
-        "system:shields needs 2 reactor power (1 free)"
+        "NOT ENOUGH POWER: system:shields needs 2 reactor power (1 free)"
+    )
+end)
+
+t.test("the last shield bar at an odd level needs an upgrade, in the game's words", function()
+    local raw = raw_with_systems()
+    local shields = raw.player.systems[1]
+    shields.level, shields.cap = 3, 3
+    t.eq(
+        select(2, C.plan("power shields +2", raw)),
+        "REQUIRES SYSTEM UPGRADE: system:shields can take at most 3 power (has 2)"
     )
 end)
 
@@ -342,13 +399,55 @@ t.test("weapon on needs reactor power and room in the weapons system", function(
     local raw = raw_with_systems()
     t.eq(
         select(2, C.plan("weapon weapon:2 on", raw)),
-        "weapon:2 (Heavy Laser) needs 3 power; system:weapons has room for 2 more"
+        "NOT ENOUGH SYSTEM POWER: weapon:2 (Heavy Laser) needs 3 power; system:weapons has room for 2 more"
     )
     raw.player.reactor.used = 7
     t.eq(
         select(2, C.plan("weapon weapon:1 on", raw)),
-        "weapon:1 (Burst Laser Mark II) needs 2 power; 1 reactor power free"
+        "NOT ENOUGH POWER: weapon:1 (Burst Laser Mark II) needs 2 power; 1 reactor power free"
     )
+end)
+
+t.test("weapon on names why the weapons system can't hold it: level, then damage", function()
+    local raw = raw_with_systems()
+    local weapons = raw.player.systems[3] -- level 3, Artemis using 1
+    weapons.level, weapons.cap = 2, 2
+    t.eq(
+        select(2, C.plan("weapon weapon:2 on", raw)),
+        "REQUIRES SYSTEM UPGRADE: weapon:2 (Heavy Laser) needs 3 power; system:weapons has room for 1 more"
+    )
+    weapons.level, weapons.cap, weapons.damage = 3, 2, 1
+    t.eq(
+        select(2, C.plan("weapon weapon:2 on", raw)),
+        "SYSTEM BROKEN: weapon:2 (Heavy Laser) needs 3 power; system:weapons has room for 1 more"
+    )
+end)
+
+t.test("a missile weapon won't power with no missiles", function()
+    local raw = raw_with_systems()
+    raw.player.weapons[1].powered, raw.player.missiles = false, 0
+    t.eq(
+        select(2, C.plan("weapon weapon:0 on", raw)),
+        "NO MISSILES: weapon:0 (Artemis Missiles) needs a missile; none left"
+    )
+end)
+
+t.test("drone on needs power in the drones system and, for some drones, an enemy ship", function()
+    local raw = raw_with_systems()
+    raw.player.drone_parts = 3
+    raw.player.drones[2] =
+        { name = "Boarding Drone", powered = false, deployed = false, power = 3, type = "BOARDER" }
+    t.eq(
+        select(2, C.plan("drone drone:1 on", raw)),
+        "NO ENEMY SHIP: drone:1 (Boarding Drone) works on an enemy ship"
+    )
+    raw.enemy = raw_with_interior().player --[[@as RawEnemy]]
+    t.eq(
+        select(2, C.plan("drone drone:1 on", raw)),
+        "REQUIRES SYSTEM UPGRADE: drone:1 (Boarding Drone) needs 3 power; system:drones has room for 1 more"
+    )
+    raw.player.drones[2].power = 1
+    t.eq(C.plan("drone drone:1 on", raw), { kind = "drone", slot = 1, on = true })
 end)
 
 t.test("weapon and drone explain bad IDs and states", function()
@@ -374,7 +473,7 @@ t.test("drones need drone parts and an un-ionized drones system", function()
     raw.player.drone_parts = 0
     t.eq(
         select(2, C.plan("drone drone:0 on", raw)),
-        "drone:0 (Defense Drone I) needs a drone part; none left"
+        "NO DRONES: drone:0 (Defense Drone I) needs a drone part; none left"
     )
     raw.player.drone_parts = 3
     raw.player.systems[5].ion = 2
@@ -767,6 +866,26 @@ t.test("cloak and battery activate when the system is ready", function()
     t.eq(select(2, C.plan("cloak", raw_with_systems())), "no system:cloaking on this ship")
 end)
 
+t.test(
+    "a Zoltan super shield blocks hacking, mind control and teleporting over, as in the game",
+    function()
+        local raw = raw_with_abilities()
+        raw.enemy.zoltan = 2
+        t.eq(
+            select(2, C.plan("hack enemy:room:0", raw)),
+            "SUPER SHIELDS PREVENT HACKING: enemy shields.zoltan is up"
+        )
+        t.eq(
+            select(2, C.plan("mindcontrol enemy:crew:201", raw)),
+            "SUPER SHIELDS BLOCK MIND CONTROL: enemy shields.zoltan is up"
+        )
+        t.eq(
+            select(2, C.plan("teleport send enemy:room:0", raw)),
+            "SUPER SHIELDS PREVENT TELEPORTING: enemy shields.zoltan is up"
+        )
+    end
+)
+
 t.test("hack launches the drone at an enemy system, then starts the pulse", function()
     local raw = raw_with_abilities()
     t.eq(C.plan("hack enemy:room:0", raw), { kind = "hack", room = 0 })
@@ -781,7 +900,10 @@ t.test("hack can't launch a second drone, or one without drone parts", function(
     raw.player.abilities.hacking.launched = true
     t.eq(select(2, C.plan("hack enemy:room:0", raw)), "a hacking drone is already out")
     raw.player.abilities.hacking.launched, raw.player.drone_parts = false, 0
-    t.eq(select(2, C.plan("hack enemy:room:0", raw)), "no drone parts to build a hacking drone")
+    t.eq(
+        select(2, C.plan("hack enemy:room:0", raw)),
+        "NO DRONES: no drone parts to build a hacking drone"
+    )
 end)
 
 t.test("mind control needs an enemy crew member we can see", function()
@@ -866,7 +988,7 @@ t.test("buy and upgrade say so when the game refused to open their window", func
     raw.window, raw.refused_window = nil, "upgrades" -- e.g. with intruders aboard
     t.eq(
         select(2, C.plan("upgrade shields", raw)),
-        "the game would not open the upgrades window just now (it refuses during some fights, e.g. with intruders aboard)"
+        "IN DANGER: the game would not open the upgrades window just now (it refuses during some fights, e.g. with intruders aboard)"
     )
 end)
 

@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Determinism check (#15): does the same Seed plus the same Action log replay the same game?
+
+Plays a short scripted Run on a fixed Seed (run A), then starts the same Seed again and feeds A's
+Action log back at the same bridge frames (run B, through the dev replayer), and compares the two
+event logs frame by frame. Dev-only: it uses the dev-probe tools and restarts FTL.
+Usage: scripts/determinism-check [seed]
+"""
+
+import json
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+BASE = Path.home() / "Library/Application Support/FasterThanLight/ftlbench"
+FTL = [sys.executable, str(ROOT / "bin" / "ftl")]
+REPLAY = BASE / "replay.jsonl"
+
+
+def ftl(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([*FTL, *args], capture_output=True, text=True, timeout=30)
+
+
+def state() -> dict[str, Any]:
+    return json.loads(ftl("state").stdout)
+
+
+def start(seed: str) -> Path:
+    subprocess.run([str(ROOT / "scripts" / "dev-run"), "fresh", seed], check=True, timeout=300)
+    return BASE / (BASE / "live" / "run.txt").read_text().strip()
+
+
+def wait_for_event() -> None:
+    for _ in range(100):
+        if state().get("event"):
+            return
+        time.sleep(0.1)
+    raise SystemExit("the intro event never opened")
+
+
+def play_a() -> None:
+    """A short Run touching the RNG: the intro, a jump, a few seconds of play."""
+    wait_for_event()
+    ftl("choose", "choice:0")
+    time.sleep(0.5)
+    ftl("unpause")
+    time.sleep(3)
+    ftl("door", "all", "open")
+    time.sleep(2)
+    ftl("door", "all", "close")
+    for _ in range(300):  # read the map file directly: `ftl map` would open the map window
+        drive = state()["ship"]["ftl_drive"]
+        if drive["ready"]:
+            break
+        time.sleep(0.2)
+    beacons = json.loads((BASE / "live" / "map.json").read_text())["beacons"]
+    target = next(b["id"] for b in beacons if b.get("reachable"))
+    ftl("jump", target)
+    deadline = time.monotonic() + 30  # play on at the new beacon: events, maybe a fight
+    while time.monotonic() < deadline:
+        event = state().get("event")
+        if event:
+            ftl("choose", next(c["id"] for c in event["choices"] if c["available"]))
+        ftl("unpause")
+        time.sleep(0.5)
+    ftl("pause")
+
+
+def events(run: Path, until: int) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for line in (run / "events.jsonl").read_text().splitlines():
+        e: dict[str, Any] = json.loads(line)
+        e.pop("wall_s", None)
+        e.pop("game_time", None)  # real frame times differ run to run; compare the game itself
+        if e["frame"] <= until:
+            out.append(e)
+    return out
+
+
+def main() -> None:
+    seed = sys.argv[1] if len(sys.argv) > 1 else "424242"
+    REPLAY.unlink(missing_ok=True)
+    run_a = start(seed)
+    play_a()
+    actions = (run_a / "actions.jsonl").read_text()
+    last = max(json.loads(line)["frame"] for line in actions.splitlines())
+    shutil.copy(run_a / "actions.jsonl", REPLAY)
+    try:
+        run_b = start(seed)
+        for _ in range(600):
+            if state()["frame"] > last + 60:
+                break
+            time.sleep(0.1)
+    finally:
+        REPLAY.unlink(missing_ok=True)
+    frames_a = [json.loads(line)["frame"] for line in actions.splitlines()]
+    frames_b = [
+        json.loads(line)["frame"] for line in (run_b / "actions.jsonl").read_text().splitlines()
+    ]
+    print(f"seed {seed}; run A {run_a.name}, run B {run_b.name}; last action at frame {last}")
+    print(f"actions replayed at the same frames: {frames_a == frames_b}")
+    a, b = events(run_a, last), events(run_b, last)
+    print(f"events up to frame {last}: A {len(a)}, B {len(b)}")
+    kinds: dict[str, int] = {}
+    for e in a:
+        kinds[e["type"]] = kinds.get(e["type"], 0) + 1
+    print(f"A's events by type: {kinds}")
+    for i, (x, y) in enumerate(zip(a, b, strict=False)):
+        if x != y:
+            print(f"first difference at event {i}:\n  A {x}\n  B {y}")
+            break
+    else:
+        print("identical" if len(a) == len(b) else "one log is a prefix of the other")
+
+
+if __name__ == "__main__":
+    main()

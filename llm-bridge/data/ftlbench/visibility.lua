@@ -49,6 +49,7 @@ FtlBench = FtlBench or {}
 ---@field cap integer           most power it can take now (level minus damage and other limits)
 ---@field damage integer
 ---@field ion integer          ion locks on the system (0 when clear)
+---@field ion_seconds number?  time left on the current ion lock
 ---@field uses_reactor boolean  false for subsystems (piloting, doors, sensors, battery)
 
 ---@class RawWeapon
@@ -65,20 +66,26 @@ FtlBench = FtlBench or {}
 ---@field name string
 ---@field powered boolean
 ---@field deployed boolean
+---@field power integer   reactor power needed
+---@field type string    the game's drone type, e.g. "COMBAT", "BOARDER", "DEFENSE"
 
 ---@class RawShip
 ---@field hull integer
 ---@field hull_max integer
 ---@field scrap integer
 ---@field oxygen number?          whole-ship percentage
----@field sensors_power integer?  Sensors base power without the manning bonus (0 if missing, broken or ionized)
+---@field sensors_power integer?  Sensors power without the manning bonus (damage and ion each take a bar)
 ---@field rooms RawRoom[]?
 ---@field doors RawDoor[]?
 ---@field crew RawCrew[]?         own crew only (for the enemy: its crew; on_enemy_ship = aboard our ship)
 ---@field sensors_manned boolean?
 ---@field lifeform_scanner boolean?
+---@field clone_queue integer?    dead crew waiting in the clone bay's queue
+---@field backup_dna boolean?     the Backup DNA Bank augment (crew keep without a working clone bay)
 ---@field reactor { used: integer, max: integer }?
 ---@field systems RawSystem[]?
+---@field augments string[]? names, as the ship screen shows them
+---@field cargo string[]? names of the items in the cargo hold
 ---@field shield_layers integer?
 ---@field shield_layers_max integer?
 ---@field zoltan integer? Zoltan (super) shield HP left
@@ -104,7 +111,7 @@ FtlBench = FtlBench or {}
 ---@field nebula boolean?
 ---@field store boolean?    true even where a human can't see it yet
 ---@field distress boolean?
----@field scouted boolean?  the ship has been next to it this sector
+---@field scouted boolean?  the game's Location.known: the ship has been next to it
 
 ---@class RawMap
 ---@field current integer
@@ -138,10 +145,11 @@ FtlBench = FtlBench or {}
 ---@field cost integer
 ---@field stock integer
 ---@field can_hold boolean   room for it, and not already installed
+---@field description string? the game's tooltip text: description, stats, scrap value
 
 ---@class RawUpgrades
 ---@field reactor { level: integer, cost: integer? }   cost nil at the maximum
----@field systems { type: integer, level: integer, max_level: integer, cost: integer? }[]
+---@field systems { type: integer, level: integer, max_level: integer, cost: integer?, description: string?, levels: { level: integer, cost: integer?, text: string }[]? }[]
 
 ---@class RawState
 ---@field in_run boolean
@@ -151,6 +159,7 @@ FtlBench = FtlBench or {}
 ---@field window string?    "map", "upgrades" or "store" while the Agent has that window open
 ---@field refused_window string?  a window the game last refused to open for `show`
 ---@field nebula boolean?
+---@field hazards { asteroids: boolean, sun: boolean, pulsar: boolean, pds: boolean, pds_target: integer }?  hazard icons; pds_target 0 us, 1 the enemy (allied ASB), 2 both
 ---@field sector integer?     1-8, shown on the HUD
 ---@field game_over boolean?
 ---@field victory boolean?
@@ -159,6 +168,8 @@ FtlBench = FtlBench or {}
 ---@field map RawMap?
 ---@field event RawEvent?    the open event window, if any
 ---@field enemy RawEnemy?
+---@field texts table<string, string>? game text by name (warning banners and refusals)
+---@field boarders RawCrew[]? enemy crew aboard our ship after their ship has gone
 ---@field autofire boolean?
 ---@field store { open: boolean, items: RawStoreItem[] }?  the store at this beacon, if any
 ---@field upgrades RawUpgrades?
@@ -360,6 +371,13 @@ local function observe_crew(c)
     }
 end
 
+---Round to one decimal place (string.format would round 0.25 down).
+---@param n number
+---@return number
+local function tenths(n)
+    return math.floor(n * 10 + 0.5) / 10
+end
+
 ---@param s RawSystem
 local function observe_system(s)
     local name = SYSTEM_NAMES[s.type + 1]
@@ -372,16 +390,11 @@ local function observe_system(s)
         level = s.level,
         damage = s.damage,
         ion = s.ion,
+        ion_seconds = s.ion > 0 and s.ion_seconds and tenths(s.ion_seconds) or nil,
         subsystem = not s.uses_reactor,
     }
 end
 
----Round to one decimal place (string.format would round 0.25 down).
----@param n number
----@return number
-local function tenths(n)
-    return math.floor(n * 10 + 0.5) / 10
-end
 Visibility.tenths = tenths
 
 ---@param ship RawShip
@@ -418,6 +431,12 @@ local function observe_power(ship, view)
         view.drones[i] =
             { id = "drone:" .. (i - 1), name = d.name, powered = d.powered, deployed = d.deployed }
     end
+    for field, kind in pairs({ augments = "augment", cargo = "cargo" }) do -- as the ship screen lists them
+        view[field] = setmetatable({}, LIST)
+        for i, name in ipairs(ship[field] or {}) do
+            view[field][i] = { id = kind .. ":" .. (i - 1), name = name }
+        end
+    end
 end
 
 ---@param raw RawState
@@ -442,7 +461,7 @@ end
 local function observe_intruders(raw, lit, view)
     view.intruders = setmetatable({}, LIST)
     local sense = senses_lifeforms(raw)
-    for _, c in ipairs(raw.enemy and raw.enemy.crew or {}) do
+    for _, c in ipairs(raw.enemy and raw.enemy.crew or raw.boarders or {}) do
         if c.on_enemy_ship and not c.dead then
             view.intruders_detected = true
             local in_sight = lit == nil or lit[c.room] == true
@@ -740,7 +759,10 @@ local function sensors_level(raw, enemy)
     if raw.nebula or power <= 0 then
         return 0
     end
-    local level = math.min(power + (ship.sensors_manned and 1 or 0), 4)
+    -- Damaged or ionized systems can't be manned, so they lose the manning bonus (visible-state.md Q2).
+    local sensors = index_by(ship.systems, "type")[7]
+    local hurt = sensors and (sensors.damage > 0 or sensors.ion > 0)
+    local level = math.min(power + ((ship.sensors_manned and not hurt) and 1 or 0), 4)
     return enemy.flagship and math.min(level, 2) or level
 end
 
@@ -881,9 +903,21 @@ local function observe_store(raw)
             stock = it.stock,
             affordable = scrap >= it.cost,
             can_hold = it.can_hold,
+            description = it.description,
         }
     end
     return { open = raw.store.open, items = items }
+end
+
+---The upgrade screen's level list: every level, the price of those not yet bought, and its text
+---(blank for some levels, which then carry none).
+---@param levels { level: integer, cost: integer?, text: string }[]
+local function levels_view(levels)
+    local out = setmetatable({}, LIST)
+    for i, l in ipairs(levels) do
+        out[i] = { level = l.level, cost = l.cost, text = l.text ~= "" and l.text or nil }
+    end
+    return out
 end
 
 ---@param raw RawState
@@ -900,10 +934,13 @@ local function observe_upgrades(raw)
     local u = raw.upgrades --[[@as RawUpgrades]]
     local systems = setmetatable({}, LIST)
     for i, s in ipairs(u.systems) do
-        systems[i] = priced(
-            { id = Visibility.system_id(s.type), level = s.level, max_level = s.max_level },
-            s.cost
-        )
+        systems[i] = priced({
+            id = Visibility.system_id(s.type),
+            level = s.level,
+            max_level = s.max_level,
+            description = s.description,
+            levels = s.levels and levels_view(s.levels),
+        }, s.cost)
     end
     return { reactor = priced({ level = u.reactor.level }, u.reactor.cost), systems = systems }
 end
@@ -915,7 +952,8 @@ function Visibility.enemy_view(raw)
     return raw.enemy and observe_enemy(raw, raw.enemy)
 end
 
-local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1
+-- Indexed by FTL Sector.type + 1 (4 = unknown; visible-state.md I6).
+local SECTOR_TYPES = { "civilian", "hostile", "nebula", "unknown", "unknown" }
 
 ---Jumps until the rebel fleet's circle reaches a point, at its current advance per jump.
 ---@param fleet { x: number, y: number, radius: number, advance: number }
@@ -970,17 +1008,26 @@ function Visibility.jump_blocker(raw)
         return "an event is open"
     elseif (ship.fuel or 0) < 1 then
         return "no fuel"
-    elseif (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1) then
-        local piloting = index_by(ship.systems, "type")[6]
-        if piloting and piloting.level == 1 then
-            local manned = false
-            for _, c in ipairs(ship.crew or {}) do
-                manned = manned or (c.room == piloting.room and not c.on_enemy_ship)
-            end
-            if not manned then
-                return "Piloting is unmanned (the FTL drive charges only with a pilot)"
-            end
+    end
+    local systems = index_by(ship.systems, "type")
+    local piloting, engines = systems[6], systems[1]
+    local charging = (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1)
+    -- The drive charges only with both systems running (damage and ion both take power away).
+    if charging and piloting and piloting.power < 1 then
+        return "Piloting has no power (the FTL drive needs it to charge)"
+    elseif charging and engines and engines.power < 1 then
+        return "Engines have no power (the FTL drive needs them to charge)"
+    elseif piloting then -- to charge and to jump, at every level: the autopilot only dodges (wiki)
+        local manned = false
+        for _, c in ipairs(ship.crew or {}) do
+            local able = not (c.dead or c.drone or c.mind_controlled or (c.stun or 0) > 0)
+            manned = manned or (c.room == piloting.room and not c.on_enemy_ship and able)
         end
+        if not manned then
+            return "Piloting is unmanned (the FTL drive needs a pilot to charge and to jump)"
+        end
+    end
+    if charging then
         return ("FTL drive charging (%.1f of %.1f)"):format(
             tenths(ship.ftl_charge or 0),
             tenths(ship.ftl_charge_time or 1)
@@ -1041,6 +1088,67 @@ local function observe_map(raw, map)
     return { sector = raw.sector, beacons = beacons, sectors = sectors, drive = drive_status(raw) }
 end
 
+---The game's text by name (text_misc.xml warning_*) on one line; the name when the bridge has none.
+---@param raw RawState
+---@param name string
+---@return string
+function Visibility.text(raw, name)
+    return (((raw.texts or {})[name] or name):gsub("\\n", " "):gsub("%s*\n%s*", " "))
+end
+
+---The text under the hazard icons: the first icon's (asteroids, sun, pulsar, ASB, nebula), as the
+---game picks it. Nil at a beacon with no hazard.
+---@param raw RawState
+---@return string?
+local function hazard_text(raw)
+    local hz = raw.hazards or {}
+    if hz.pds and not (hz.asteroids or hz.sun or hz.pulsar) and (hz.pds_target or 0) ~= 0 then
+        return hz.pds_target == 1 and "warning_pds_allies" or "warning_pds_all"
+    elseif hz.asteroids or hz.sun or hz.pulsar or hz.pds or raw.nebula then
+        return "warning_environment_danger"
+    end
+    return nil
+end
+
+---The game's red WARNING banners that are up now, in its own words (text_misc.xml; the conditions
+---are its own notes there). Nil when none is up.
+---@param raw RawState
+---@param ship table our ship's view (for intruders as the player sees them)
+---@return string[]?
+local function warnings(raw, ship)
+    local p = raw.player --[[@as RawShip]]
+    local out = nil
+    local systems = index_by(p.systems or {}, "type")
+    local shields, engines, clonebay = systems[0], systems[1], systems[13] -- 13: Clone Bay
+    local hazard = hazard_text(raw)
+    local hull = p.hull / math.max(p.hull_max, 1)
+    for _, w in ipairs({
+        { hull <= 0.25, "warning_hull_25" }, -- the worst hull banner only
+        { hull > 0.25 and hull <= 0.5, "warning_hull_50" },
+        { hull > 0.5 and hull <= 0.75, "warning_hull_75" },
+        {
+            shields and shields.damage > 0 and shields.level - shields.damage <= 1,
+            "warning_shields",
+        },
+        { (p.oxygen or 100) < 25, "warning_oxygen" },
+        { ship.intruders_detected, "warning_intruders" },
+        { engines and engines.damage >= engines.level, "warning_engine" },
+        { -- the clone bay box's banner: a dead crew member will be lost without power
+            clonebay and clonebay.power < 1 and (p.clone_queue or 0) > 0 and not p.backup_dna,
+            "warning_clone_off_1",
+            "warning_clone_off_2",
+        },
+        { hazard ~= nil, hazard }, -- the text under the first hazard icon, if any
+    }) do
+        if w[1] then
+            out = out or setmetatable({}, LIST)
+            local text = Visibility.text(raw, w[2])
+            out[#out + 1] = w[3] and text .. " " .. Visibility.text(raw, w[3]) or text
+        end
+    end
+    return out
+end
+
 ---Build the Observation and the new Visible events.
 ---@param prev RawState? raw state from the previous frame (nil on the first frame)
 ---@param raw RawState
@@ -1072,6 +1180,7 @@ function Visibility.observe(prev, raw, hooks)
     }
     if out.views.state.ship then
         out.views.state.ship.ftl_drive = drive_status(raw) -- on the HUD, so no window needed
+        out.views.state.warnings = warnings(raw, out.views.state.ship)
     end
     -- A human can open the store only with no event window up and no hostile ship here.
     local store_usable = raw.store

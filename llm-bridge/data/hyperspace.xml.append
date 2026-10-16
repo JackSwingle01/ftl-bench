@@ -4,3 +4,8 @@
     <script>data/ftlbench/commands.lua</script>
     <script>data/ftlbench/bridge.lua</script>
 </scripts>
+
+<!-- Hyperspace's fuller tooltips: the store text the Agent reads is the text on screen. -->
+<mod:findLike type="redesignedWeaponTooltips"><mod:setAttributes enabled="true"/></mod:findLike>
+<mod:findLike type="redesignedDroneTooltips"><mod:setAttributes enabled="true"/></mod:findLike>
+<mod:findLike type="redesignedAugmentTooltips"><mod:setAttributes enabled="true"/></mod:findLike>

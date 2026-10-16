@@ -9,9 +9,10 @@
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
 --   ftlbench/live/run.txt       the current Run folder, relative to ftlbench/
---   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run
+--   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run (each line also printed to the console)
 --   ftlbench/runs/<stamp>/events.jsonl    events for that Run (already filtered by Visibility)
 --   ftlbench/runs/<stamp>/score.json      Score record, rewritten every game-over frame so it ends final
+--   ftlbench/console_commands   "off" stops printing Commands; missing or anything else leaves it on
 --
 -- Needs our Hyperspace fork (game-over and score fields); see docs/hyperspace-fork.md.
 
@@ -212,6 +213,7 @@ local function read_systems(ship)
             cap = math.min(int(y:GetPowerCap()), int(y.healthState.first)),
             damage = int(y.healthState.second - y.healthState.first),
             ion = math.max(int(y.iLockCount), 0),
+            ion_seconds = y.lockTimer.currGoal - y.lockTimer.currTime, -- the icon's blue bar
             uses_reactor = y.bNeedsPower,
         }
     end
@@ -241,13 +243,16 @@ local function read_armaments(ship)
     for i = 0, list:size() - 1 do
         local d = list[i]
         drone_objs[#drone_objs + 1] = d
-        drones[#drones + 1] = { name = d:GetName(), powered = d.powered, deployed = d.deployed }
+        drones[#drones + 1] = {
+            name = d:GetName(),
+            powered = d.powered,
+            deployed = d.deployed,
+            power = int(d.blueprint.power),
+            type = d.blueprint.typeName,
+        }
     end
     return weapons, drones, weapon_objs, drone_objs
 end
-
--- Beacons the ship has been next to this sector: their store/distress markers stay visible.
-local scouted, scouted_sector = {}, nil
 
 ---@param loc any Location
 ---@return string
@@ -256,12 +261,8 @@ local function loc_key(loc)
 end
 
 ---@param sm any StarMap
----@param sector integer
 ---@return RawMap
-local function read_map(sm, sector)
-    if scouted_sector ~= sector then
-        scouted, scouted_sector = {}, sector
-    end
+local function read_map(sm)
     local index = {}
     for i = 0, sm.locations:size() - 1 do
         index[loc_key(sm.locations[i])] = i
@@ -274,9 +275,6 @@ local function read_map(sm, sector)
         for j = 0, loc.connectedLocations:size() - 1 do
             local other = index[loc_key(loc.connectedLocations[j])]
             links[#links + 1] = other
-            if i == current then
-                scouted[other] = true
-            end
         end
         beacons[#beacons + 1] = {
             id = i,
@@ -289,7 +287,9 @@ local function read_map(sm, sector)
             nebula = loc.nebula,
             store = loc.event ~= nil and loc.event.store,
             distress = loc.event ~= nil and loc.event.distressBeacon,
-            scouted = scouted[i],
+            -- The game's own flag: set once the ship is next to the beacon, kept in the save, so its
+            -- store/distress markers stay (visible-state.md Q13).
+            scouted = loc.known,
         }
     end
     local choices
@@ -343,12 +343,15 @@ local function read_event(gui)
     return { text = box.mainText, choices = choices, received = read_resources(box.rewards) }
 end
 
+-- Accepted moves by crew uid, until the crew member arrives (or command_failed reports it).
+local pending_moves = {}
+
 -- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
 -- The game opens a window a frame or so after its key press, so a `show` waits a few frames
 -- (pending) before counting the window as refused (the game won't open some mid-fight).
 local SHOW_GRACE_FRAMES = 5
-local pending_window, pending_frames, refused_window = nil, 0, nil
-local pressed_window = nil -- the window our last `show` key press was for
+-- The window a `show` pressed for until it opens (pending), and the last one the game refused.
+local shown = { pending = nil, frames = 0, refused = nil }
 
 ---The game window open over the ship view, read from the windows themselves (an event box sets
 ---the same menu pause, so that pause alone can't tell them apart).
@@ -363,10 +366,8 @@ local function game_window()
         return "map"
     elseif store and store.bOpen then
         return "store"
-    elseif pressed_window == "upgrades" and app.gui.menu_pause and not app.gui.choiceBoxOpen then
-        -- The upgrades tab's own open flag stays false (its ship-info window isn't bound), so go by
-        -- the window pause after our key press.
-        return "upgrades"
+    elseif app.gui.shipScreens.bOpen then
+        return "upgrades" -- the ship-info window, which opens on its upgrades tab
     end
     return nil
 end
@@ -439,6 +440,126 @@ local function mark_damage(crew)
     end
 end
 
+local WARNINGS = { -- banners and the action refusals our Command errors share
+    "warning_hull_75",
+    "warning_hull_50",
+    "warning_hull_25",
+    "warning_shields",
+    "warning_oxygen",
+    "warning_intruders",
+    "warning_engine",
+    "warning_clone_off_1",
+    "warning_clone_off_2",
+    "warning_environment_danger",
+    "warning_pds_allies",
+    "warning_pds_all",
+    "warning_in_danger",
+    "warning_no_missiles",
+    "warning_no_drones",
+    "warning_no_enemy_ship",
+    "warning_no_power",
+    "warning_system_broken",
+    "warning_needs_upgrade",
+    "warning_no_system_power",
+    "warning_super_shield_mind",
+    "warning_super_shield_hacking",
+    "warning_super_shield_teleporter",
+}
+local warning_text_cache
+
+---The warning texts, from the game's text library (read once).
+---@return table<string, string>
+local function warning_texts()
+    if not warning_text_cache then
+        warning_text_cache = {}
+        for _, name in ipairs(WARNINGS) do
+            warning_text_cache[name] = Hyperspace.Text:GetText(name)
+        end
+    end
+    return warning_text_cache
+end
+
+---@param v any a std::vector<std::string>
+---@return string[]
+local function string_list(v)
+    local out = {}
+    for i = 0, v:size() - 1 do
+        out[#out + 1] = v[i]
+    end
+    return out
+end
+
+---An equipment blueprint's display name, whichever kind it is.
+---@param name string
+---@return string
+local function title_of(name)
+    local B = Hyperspace.Blueprints
+    for _, bp in ipairs({
+        B:GetWeaponBlueprint(name),
+        B:GetDroneBlueprint(name),
+        B:GetAugmentBlueprint(name),
+    }) do
+        local title = bp.desc.title:GetText()
+        if title ~= "" then
+            return title
+        end
+    end
+    return name
+end
+
+local tooltips = {} -- by blueprint name: an item's text doesn't change
+
+---The text a player sees hovering an item in the store or the equipment screen: the game fills the
+---equipment screen's info box for it (with Hyperspace's redesigned tooltips, switched on in our
+---hyperspace.xml.append) and we read the box back. Nil for a name that is no equipment.
+---@param name string a blueprint name
+---@return string?
+local function hover_text(name)
+    if tooltips[name] == nil then
+        local B, info = Hyperspace.Blueprints, Hyperspace.App.gui.equipScreen.infoBox
+        local weapon, drone = B:GetWeaponBlueprint(name), B:GetDroneBlueprint(name)
+        local augment, crew = B:GetAugmentBlueprint(name), B:GetCrewBlueprint(name)
+        -- Unknown names get a stand-in back: a blank weapon, drone or augment, or the default crew.
+        local filled = true
+        if int(weapon.power) > 0 then
+            info:SetBlueprint(weapon, 0, true, 0)
+        elseif int(drone.power) > 0 then
+            info:SetBlueprint(drone, 0, true, 0)
+        elseif augment.name == name and augment.desc.title:GetText() ~= "" then
+            info:SetBlueprint(augment)
+        elseif crew.name == name then
+            info:SetBlueprint(crew, 0, false)
+        else
+            filled = false -- systems, fuel, missiles, drone parts: their description is all
+        end
+        tooltips[name] = filled and info.desc.description:GetText():gsub("%s+$", "") or ""
+        info:Clear()
+    end
+    return tooltips[name] ~= "" and tooltips[name] or nil
+end
+
+---A store box's hover text. Systems, fuel, missiles and the like show their description.
+---@param box any StoreBox
+---@return string
+local function store_tooltip(box)
+    return box.pBlueprint and hover_text(box.pBlueprint.name) or box.desc.description:GetText()
+end
+
+---A system box's hover text without its hotkey lines (Commands move power, not keys).
+---@param box any SystemBox
+---@return string
+local function system_tooltip(box)
+    local add = Hyperspace.Text:GetText("add_power"):match("^[^\\]*")
+    local remove = Hyperspace.Text:GetText("remove_power"):match("^[^\\]*")
+    local lines = {}
+    for line in (box:GenerateTooltip() .. "\n"):gmatch("(.-)\n") do
+        if line:sub(1, #add) ~= add and line:sub(1, #remove) ~= remove then
+            lines[#lines + 1] = line
+        end
+    end
+    return (table.concat(lines, "\n"):gsub("%s+$", ""))
+end
+
 ---The store at the current beacon, if any (a human can open it from the store button here).
 ---@return table? store raw store view
 ---@return any[] boxes StoreBox objects in item order
@@ -459,10 +580,31 @@ local function read_store()
                 cost = int(box.desc.cost),
                 stock = int(box.count),
                 can_hold = box:CanHold(),
+                description = store_tooltip(box),
             }
         end
     end
     return { open = store.bOpen, items = items }, boxes, store
+end
+
+local system_texts = {} -- by system type: fixed for the Run, so read once
+
+---A system's upgrade-screen text: its description and each level's line (0-based in the game).
+---@param y any ShipSystem
+---@param bp any SystemBlueprint?
+---@param max integer
+---@return { description: string?, levels: string[] }
+local function system_text(y, bp, max)
+    local key = int(y.iSystemType)
+    local text = system_texts[key]
+    if not text or #text.levels < max then
+        text = { description = bp and bp.desc.description:GetText(), levels = {} }
+        for l = 1, max do
+            text.levels[l] = Hyperspace.ShipSystem.GetLevelDescription(y.iSystemType, l - 1, false)
+        end
+        system_texts[key] = text
+    end
+    return text
 end
 
 ---@param ship any ShipManager
@@ -477,8 +619,24 @@ local function read_upgrades(ship)
         if level < max and bp and bp.upgradeCosts:size() >= level then
             cost = int(bp.upgradeCosts[level - 1]) -- costs[i] buys level i + 2
         end
-        systems[#systems + 1] =
-            { type = int(y.iSystemType), level = level, max_level = max, cost = cost }
+        local text = system_text(y, bp, max)
+        local levels = {}
+        for l = 1, max do -- the upgrade screen's list: prices for levels not yet bought
+            local price = l > level and bp and bp.upgradeCosts:size() >= l - 1
+            levels[l] = {
+                level = l,
+                cost = price and int(bp.upgradeCosts[l - 2]) or nil,
+                text = text.levels[l],
+            }
+        end
+        systems[#systems + 1] = {
+            type = int(y.iSystemType),
+            level = level,
+            max_level = max,
+            cost = cost,
+            description = text.description,
+            levels = levels,
+        }
     end
     local reactor_cost = int(Hyperspace.App.gui.upgradeScreen.reactorButton:GetUpgradeCost())
     local pm = Hyperspace.PowerManager.GetPowerManager(0)
@@ -519,6 +677,7 @@ end
 
 -- Game objects behind the last raw state, for the executor.
 local door_objects, crew_objects, weapon_objects, drone_objects, store_boxes = {}, {}, {}, {}, {}
+local augment_names, cargo_names = {}, {} -- blueprint names, in the state view's order
 
 ---@return RawState
 local function read_raw()
@@ -540,7 +699,15 @@ local function read_raw()
     if in_run then
         local sensors = ship:GetSystem(SENSORS)
         local doors
-        raw.nebula = app.world.space.bNebula
+        local space = app.world.space
+        raw.nebula = space.bNebula
+        raw.hazards = { -- the hazard icons at the top of the screen
+            asteroids = space.asteroidGenerator.bRunning,
+            sun = space.sunLevel,
+            pulsar = space.pulsarLevel,
+            pds = space.bPDS,
+            pds_target = int(space.envTarget),
+        }
         raw.sector = int(app.world.starMap.worldLevel) + 1
         raw.game_over = gui.gameover
         -- alreadyWon is set the moment the Flagship dies; bVictory once the end screen opens.
@@ -551,13 +718,17 @@ local function read_raw()
             hull_max = int(ship.ship.hullIntegrity.second),
             scrap = int(ship.currentScrap),
             oxygen = ship:GetOxygenPercentage(),
-            -- Base power (Visibility adds the manning bonus); an ionized system gives nothing.
-            sensors_power = sensors and not sensors:Ioned(1) and int(sensors.powerState.first) or 0,
+            -- Power without the manning bonus (Visibility adds it): damage and each ion point take a
+            -- bar away (visible-state.md Q2), which the game's power state already reflects.
+            sensors_power = sensors and int(sensors.powerState.first) or 0,
             rooms = read_rooms(ship),
         }
         doors, door_objects = read_doors(ship)
         raw.player.doors = doors
         raw.player.crew, crew_objects = read_crew(ship)
+        if not Hyperspace.ships.enemy then -- boarders outlive a ship that jumps away
+            raw.boarders = read_crew(ship, 1)
+        end
         mark_damage(raw.player.crew)
         local p = raw.player --[[@as RawShip]]
         local pm = Hyperspace.PowerManager.GetPowerManager(0)
@@ -569,29 +740,38 @@ local function read_raw()
         p.evasion, p.fuel = ship:GetDodgeFactor(), int(ship.fuel_count)
         p.missiles, p.drone_parts = int(ship:GetMissileCount()), int(ship:GetDroneCount())
         p.weapons, p.drones, weapon_objects, drone_objects = read_armaments(ship)
+        augment_names, cargo_names =
+            string_list(ship:GetAugmentationList()), string_list(gui.equipScreen:GetCargoHold())
+        p.augments, p.cargo = {}, {}
+        for i, name in ipairs(augment_names) do
+            p.augments[i] = title_of(name)
+        end
+        for i, name in ipairs(cargo_names) do
+            p.cargo[i] = title_of(name)
+        end
         p.ftl_charge, p.ftl_charge_time = ship.jump_timer.first, ship.jump_timer.second
         p.sensors_manned = sensors ~= nil and int(sensors.iActiveManned) > 0
         p.lifeform_scanner = has_augment(ship, "LIFE_SCANNER")
+        p.clone_queue = int(Hyperspace.CrewFactory:GetCloneReadyList(true):size())
+        p.backup_dna = has_augment(ship, "BACKUP_DNA")
         local enemy = Hyperspace.ships.enemy
         raw.enemy = enemy and read_enemy(enemy, ship) or nil
         raw.autofire = gui.combatControl.weapControl.autoFiring
         p.abilities = read_abilities(ship)
-        raw.map = read_map(app.world.starMap, raw.sector)
+        raw.map = read_map(app.world.starMap)
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
+        raw.texts = warning_texts()
         raw.window = game_window()
-        if not pending_window and not gui.menu_pause then
-            pressed_window = nil -- that window has closed
+        if shown.pending and raw.window == shown.pending then
+            shown.pending = nil
+        elseif shown.pending and shown.frames > 0 then
+            shown.frames = shown.frames - 1
+            raw.window = raw.window or shown.pending -- opening; Commands treat it as open
+        elseif shown.pending then
+            shown.refused, shown.pending = shown.pending, nil -- the game never opened it
         end
-        if pending_window and raw.window == pending_window then
-            pending_window = nil
-        elseif pending_window and pending_frames > 0 then
-            pending_frames = pending_frames - 1
-            raw.window = raw.window or pending_window -- opening; Commands treat it as open
-        elseif pending_window then
-            refused_window, pending_window = pending_window, nil -- the game never opened it
-        end
-        raw.refused_window = refused_window
+        raw.refused_window = shown.refused
         raw.upgrades = read_upgrades(ship)
     end
     return raw
@@ -707,7 +887,7 @@ local function execute(cmd)
         -- Escape closes the window the way a player does, clearing the game's window pause too
         -- (Store:Close() alone left it set). Commands only allows this while a window is open.
         press(KEY_ESCAPE)
-        pending_window, pressed_window = nil, nil
+        shown.pending = nil
     elseif cmd.kind == "cloak" or cmd.kind == "battery" then
         local ship = Hyperspace.ships.player
         local sys = cmd.kind == "cloak" and ship.cloakSystem or ship.batterySystem
@@ -753,8 +933,7 @@ local function execute(cmd)
                 return "no store hotkey is bound; close FTL and run scripts/install-mod"
             end
             press(keys[cmd.window])
-            pending_window, pending_frames, refused_window = cmd.window, SHOW_GRACE_FRAMES, nil
-            pressed_window = cmd.window
+            shown.pending, shown.frames, shown.refused = cmd.window, SHOW_GRACE_FRAMES, nil
         end
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
@@ -764,6 +943,11 @@ local function execute(cmd)
     elseif cmd.kind == "jump" then
         -- The game travels on its next update, as when the player clicks a beacon on the map.
         local sm = Hyperspace.App.world.starMap
+        if sm.bOpen then
+            -- Close the map first: the game froze in StarMap::OnRender when it rendered an open map
+            -- with travel set this way (#21).
+            press(KEY_ESCAPE)
+        end
         sm.potentialLoc = sm.locations[cmd.beacon]
         sm.readyToTravel = true
     elseif cmd.kind == "jump_sector" then
@@ -825,8 +1009,12 @@ local function handle_inbox(raw)
                     err = "internal error: " .. tostring(result)
                 end
             end
-            if cmd and cmd.kind == "show" and not err and pending_window then
-                raw.window, raw.pause.menu = pending_window, true -- later lines this tick see it
+            if cmd and cmd.kind == "move" and not err then
+                pending_moves[cmd.crew] =
+                    { room = cmd.room, enemy = cmd.enemy, at = raw.game_time, command = text }
+            end
+            if cmd and cmd.kind == "show" and not err and shown.pending then
+                raw.window, raw.pause.menu = shown.pending, true -- later lines this tick see it
             end
             local status = err and ("error\t" .. err)
                 or (cmd and cmd.seconds and ("ok\t" .. cmd.seconds))
@@ -841,6 +1029,15 @@ local function handle_inbox(raw)
                     result = err and "error" or "ok",
                     error = err,
                 }) .. "\n")
+                -- ftlbench/console_commands: "off" stops echoing Commands to the console; default on.
+                local setting_file = io.open(BASE .. "/console_commands", "r")
+                local setting = setting_file and setting_file:read("l")
+                if setting_file then
+                    setting_file:close()
+                end
+                if setting ~= "off" then
+                    print("[ftlbench] " .. text .. ": " .. (err or "ok"))
+                end
             end
         end
     end
@@ -972,6 +1169,37 @@ script.on_internal_event(events.SHIELD_COLLISION, function(ship, projectile, _da
     return CONTINUE
 end)
 
+---What `ftl help <id>` shows: the game's hover text for each thing of ours, by its state ID.
+---@param raw RawState
+---@return table<string, string>
+local function help_texts(raw)
+    local help = {}
+    -- Generating a system's tooltip also hands it to the mouse, which would flash it on screen:
+    -- put back whatever the mouse was really showing.
+    local mouse = Hyperspace.Mouse
+    local tip, title, timer = mouse.tooltip, mouse.tooltipTitle, mouse.tooltipTimer
+    local boxes = Hyperspace.App.gui.sysControl.sysBoxes
+    for i = 0, boxes:size() - 1 do
+        local box = boxes[i]
+        help[Visibility.system_id(int(box.pSystem.iSystemType))] = system_tooltip(box)
+    end
+    mouse.tooltip, mouse.tooltipTitle, mouse.tooltipTimer = tip, title, timer
+    for kind, list in pairs({ weapon = weapon_objects, drone = drone_objects }) do
+        for i, obj in ipairs(list) do
+            help[kind .. ":" .. (i - 1)] = hover_text(obj.blueprint.name)
+        end
+    end
+    for kind, names in pairs({ augment = augment_names, cargo = cargo_names }) do
+        for i, name in ipairs(names) do
+            help[kind .. ":" .. (i - 1)] = hover_text(name)
+        end
+    end
+    for _, c in ipairs(raw.player.crew or {}) do
+        help["crew:" .. c.uid] = hover_text(c.species)
+    end
+    return help
+end
+
 local function tick()
     local raw = read_raw()
     if raw.in_run then
@@ -980,14 +1208,25 @@ local function tick()
             w.autoFiring = raw.autofire
         end
         frame = frame + 1
+        FtlBench.frame = frame -- for the dev replayer
         if not Visibility.is_paused(raw) then
             game_time = game_time + Hyperspace.FPS.SpeedFactor / 16
         end
     end
     local out = Visibility.observe(prev, raw, take_hooks())
+    if raw.in_run then
+        for _, e in ipairs(Commands.failed_moves(pending_moves, raw, raw.game_time)) do
+            out.events[#out.events + 1] = e
+        end
+    end
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
+    if raw.in_run and frame % 30 == 1 then -- the Run's first frame, then twice a second
+        write_atomic(LIVE .. "/help.json", Json.encode(help_texts(raw)))
+    elseif not raw.in_run then
+        os.remove(LIVE .. "/help.json")
+    end
     for _, view in ipairs({ "map", "store", "upgrades" }) do
         if out.views[view] then
             write_atomic(LIVE .. "/" .. view .. ".json", Json.encode(out.views[view]))
@@ -1006,6 +1245,7 @@ local function tick()
                 run_dir .. "/score.json",
                 Json.encode({
                     score = state.score,
+                    seed = int(Hyperspace.Global.currentSeed),
                     sector = state.sector,
                     victory = state.victory,
                     frame = raw.frame,
@@ -1026,7 +1266,7 @@ os.remove(LIVE .. "/run.txt") -- no Run until on_init says so
 
 script.on_init(function()
     frame, game_time, prev = 0, 0.0, nil
-    scouted, scouted_sector = {}, nil -- markers seen in an earlier Run must not carry over
+    pending_moves = {} -- a new Run's clock starts over, and its crew uids can repeat
     health_seen, last_drop = {}, {}
     local name = "runs/" .. os.date("%Y%m%d-%H%M%S")
     run_dir = BASE .. "/" .. name
@@ -1036,6 +1276,23 @@ script.on_init(function()
 end)
 
 local failed = false
+-- A Run's Seed: ftlbench/run_seed (one number) fixes the seed of the next New Game, in a dev build
+-- only, so a file left behind by scripts/dev-run can never fix the Seed of a scored Run.
+script.on_internal_event(Defines.InternalEvents.GET_RUN_SEED, function(isCustomSeed, seed)
+    if not FtlBench.dev_probe then
+        return isCustomSeed, seed
+    end
+    local f = io.open(BASE .. "/run_seed", "r")
+    local wanted = f and tonumber(f:read("l"))
+    if f then
+        f:close()
+    end
+    if wanted then
+        return true, math.tointeger(wanted)
+    end
+    return isCustomSeed, seed
+end)
+
 script.on_internal_event(Defines.InternalEvents.ON_TICK, function()
     local ok, err = pcall(tick)
     if not ok and not failed then

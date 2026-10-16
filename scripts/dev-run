@@ -1,23 +1,35 @@
 #!/usr/bin/env bash
 # Development loop: close FTL, reinstall the mod with dev tools, relaunch, and let the
 # dev autostart press Continue (or New Game). Waits until a Run is live.
-# Usage: scripts/dev-run [continue|new]   ("new" moves any saved Run to hs_continue.sav.dev-bak)
+# Usage: scripts/dev-run [continue|new [seed]|fresh [seed]]   (FTLBENCH_CONSOLE_COMMANDS=off to stop
+#   printing each Command to the game console)
+#   "new" moves any saved Run to hs_continue.sav.dev-bak-<time> and answers the intro event;
+#   "fresh" is a new Run that leaves the intro event open for the caller to answer.
 set -euo pipefail
 MODE="${1:-continue}"
+SEED="${2:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SAVE="$HOME/Library/Application Support/FasterThanLight"
 pkill -f "$ROOT/game/FTL.app" && sleep 2 || true
+pkill -9 -f "$ROOT/game/FTL.app" && sleep 1 || true # a frozen FTL ignores the polite kill
+pkill -f "Hyperspace Freeze Detected" || true       # and its watchdog's dialog would linger
 # Closing FTL this way looks like a crash to Hyperspace, whose popup would block the autostart.
 rm -f "$SAVE/hs_crash.flag"
 "$ROOT/scripts/install-mod" --dev >/dev/null
 mkdir -p "$SAVE/ftlbench/live"
 echo "$MODE" > "$SAVE/ftlbench/autostart"
+echo "${FTLBENCH_CONSOLE_COMMANDS:-on}" > "$SAVE/ftlbench/console_commands" # print each Command to the console
+if [[ "$MODE" != "continue" && -n "$SEED" ]]; then
+    echo "$SEED" > "$SAVE/ftlbench/run_seed" # the bridge hands it to the game's New Game
+elif [[ "$MODE" != "continue" ]]; then
+    rm -f "$SAVE/ftlbench/run_seed"
+fi
 rm -f "$SAVE/ftlbench/live/state.json"
 # New Game over a saved Run opens a "this deletes your run" confirmation the autostart can't answer,
 # so set the saved Run aside. hs_continue.sav is Hyperspace's save (only this modded copy uses it);
 # move rather than delete anyway.
-if [[ "$MODE" == "new" && -f "$SAVE/hs_continue.sav" ]]; then
-    mv "$SAVE/hs_continue.sav" "$SAVE/hs_continue.sav.dev-bak"
+if [[ "$MODE" != "continue" && -f "$SAVE/hs_continue.sav" ]]; then
+    mv -n "$SAVE/hs_continue.sav" "$SAVE/hs_continue.sav.dev-bak-$(date +%Y%m%d-%H%M%S)" # never overwrite an older one
 fi
 open "$ROOT/game/FTL.app"
 for _ in $(seq 1 120); do

@@ -310,7 +310,9 @@ local function raw_with_systems()
             missiles = false,
         },
     }
-    ship.drones = { { name = "Defense Drone I", powered = true, deployed = false } }
+    ship.drones = {
+        { name = "Defense Drone I", powered = true, deployed = false, power = 1, type = "DEFENSE" },
+    }
     return raw
 end
 
@@ -585,12 +587,56 @@ t.test("the drive says why it can't jump, on the map and in the state", function
     })
 end)
 
-t.test("the drive can't charge with nobody in a level-1 Piloting room", function()
+t.test("the drive can't charge with nobody in Piloting, at any level", function()
     local raw = raw_with_map()
     raw.player.ftl_charge = 0
     raw.player.crew[1].room = 1 -- Maria leaves the piloting room (room 0)
     local d = map_view(raw).drive
     t.eq({ d.ready, d.not_ready }, { false, "Piloting is unmanned" })
+    raw.player.systems[2].level = 2 -- the autopilot dodges unmanned but doesn't charge (seen in-game)
+    t.eq(map_view(raw).drive.not_ready, "Piloting is unmanned")
+end)
+
+t.test(
+    "a charged drive still can't jump with nobody in Piloting (wiki: crew make the jump)",
+    function()
+        local raw = raw_with_map()
+        raw.player.ftl_charge, raw.player.ftl_charge_time = 1, 1 -- fully charged
+        raw.player.crew[1].room = 1 -- Maria leaves the piloting room
+        t.eq(map_view(raw).drive.not_ready, "Piloting is unmanned")
+    end
+)
+
+t.test(
+    "stunned or mind-controlled crew and crew drones don't count as a pilot (wiki Piloting)",
+    function()
+        for _, field in ipairs({ "stun", "mind_controlled", "drone" }) do
+            local raw = raw_with_map()
+            raw.player.ftl_charge = 0
+            raw.player.crew[1][field] = field == "stun" and 3 or true -- Maria, in the piloting room
+            t.eq(map_view(raw).drive.not_ready, "Piloting is unmanned")
+        end
+    end
+)
+
+t.test("the drive can't charge with Piloting or Engines out of power", function()
+    local raw = raw_with_map()
+    raw.player.ftl_charge = 0
+    raw.player.systems[2].power = 0 -- piloting (type 6)
+    t.eq(map_view(raw).drive.not_ready, "Piloting has no power")
+    raw = raw_with_map()
+    raw.player.ftl_charge = 0
+    raw.player.systems[#raw.player.systems + 1] = {
+        type = 1,
+        room = 1,
+        power = 0,
+        level = 2,
+        cap = 2,
+        damage = 2,
+        ion = 0,
+        uses_reactor = true,
+    }
+    t.eq(map_view(raw).drive.not_ready, "Engines have no power")
 end)
 
 t.test("at the exit, the map offers the next sectors by type only", function()
@@ -622,7 +668,8 @@ t.test("arriving at a beacon and entering a sector make events", function()
     t.eq(V.observe(before, after, {}).events, { { type = "new_sector", sector = 2 } })
 end)
 
--- #11: events and choices. ChoiceText type: 0 normal, 1 blue option, 2 requirement not met.
+-- #11: events and choices. ChoiceText type: 0 normal, 1 requirement not met, 2 blue option
+-- (2 inferred; see visible-state.md Q7b).
 ---@return RawState
 local function raw_with_event()
     local raw = raw_with_systems()
@@ -784,7 +831,15 @@ local function raw_with_enemy()
                 missiles = false,
             },
         },
-        drones = { { name = "Defense Drone", powered = true, deployed = true } },
+        drones = {
+            {
+                name = "Defense Drone",
+                powered = true,
+                deployed = true,
+                power = 1,
+                type = "DEFENSE",
+            },
+        },
         crew = {
             {
                 uid = 201,
@@ -915,6 +970,25 @@ t.test("broken Sensors and nebulas give level 0; the Flagship caps it at 2", fun
     t.eq(enemy_view(raw).sensors_level, 2)
 end)
 
+t.test("damaged or ionized Sensors can't be manned, so they lose the manning bonus", function()
+    for _, hurt in ipairs({ { damage = 1, ion = 0 }, { damage = 0, ion = 1 } }) do
+        local raw = raw_with_enemy()
+        raw.player.sensors_power, raw.player.sensors_manned = 1, true -- level 2 with 1 bar down
+        raw.player.systems = raw.player.systems or {}
+        raw.player.systems[#raw.player.systems + 1] = {
+            type = 7,
+            room = 0,
+            power = 1,
+            level = 2,
+            cap = 2,
+            damage = hurt.damage,
+            ion = hurt.ion,
+            uses_reactor = false,
+        }
+        t.eq(enemy_view(raw).sensors_level, 1)
+    end
+end)
+
 t.test("our crew aboard give vision of their room only", function()
     local raw = raw_with_enemy()
     raw.player.crew[1].on_enemy_ship, raw.player.crew[1].room = true, 1
@@ -1009,6 +1083,15 @@ t.test("boarders on our ship: the warning always, details in rooms we can see", 
     raw.player.sensors_power = 0 -- room 2 has no crew of ours: dark
     ship = V.observe(nil, raw, {}).views.state.ship
     t.eq({ ship.intruders_detected, #ship.intruders }, { true, 0 })
+end)
+
+t.test("boarders left behind when their ship jumps away are still intruders", function()
+    local raw = raw_with_enemy()
+    local boarder = raw.enemy.crew[2]
+    boarder.on_enemy_ship, boarder.room = true, 2
+    raw.enemy, raw.boarders = nil, { boarder } -- the ship has gone; its crew aboard ours hasn't
+    local ship = V.observe(nil, raw, {}).views.state.ship
+    t.eq({ ship.intruders_detected, #ship.intruders }, { true, 1 })
 end)
 
 -- #6 review: leaks that must stay closed.
@@ -1138,6 +1221,104 @@ t.test("a hit outside any room names no room", function()
     })
 end)
 
+t.test("state lists our augments and the cargo hold, each with an ID for ftl help", function()
+    local raw = raw_with_systems()
+    raw.player.augments = { "Scrap Recovery Arm" }
+    raw.player.cargo = { "Basic Laser", "Defense Drone I" }
+    local ship = V.observe(nil, raw, {}).views.state.ship
+    t.eq({ ship.augments, ship.cargo }, {
+        { { id = "augment:0", name = "Scrap Recovery Arm" } },
+        { { id = "cargo:0", name = "Basic Laser" }, { id = "cargo:1", name = "Defense Drone I" } },
+    })
+end)
+
+-- #26: the game's WARNING banners, in its own words (text_misc.xml warning_*).
+t.test("warnings list the game's banners that are up, in the game's text", function()
+    local raw = raw_with_systems()
+    raw.texts = { warning_hull_50 = "HULL AT 50%", warning_shields = "SHIELDS CRITICAL" }
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil) -- all well: no banner
+    raw.player.hull, raw.player.hull_max = 14, 30 -- 47%: the 50% banner, not the 75% one
+    raw.player.systems[1].damage = 1 -- Shields 2 with 1 damage: 1 health left
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, { "HULL AT 50%", "SHIELDS CRITICAL" })
+end)
+
+t.test("each warning has its own condition", function()
+    local raw = raw_with_systems()
+    raw.texts = {}
+    local function warnings()
+        return V.observe(nil, raw, {}).views.state.warnings
+    end
+    raw.player.hull, raw.player.hull_max = 7, 30
+    t.eq(warnings(), { "warning_hull_25" }) -- a missing text falls back to its name
+    raw.player.hull = 30
+    raw.player.oxygen = 24
+    t.eq(warnings(), { "warning_oxygen" })
+    raw.player.oxygen = 100
+    raw.player.systems[#raw.player.systems + 1] = {
+        type = 1,
+        room = 3,
+        power = 0,
+        level = 2,
+        cap = 0,
+        damage = 2,
+        ion = 0,
+        uses_reactor = true,
+    }
+    t.eq(warnings(), { "warning_engine" })
+end)
+
+t.test("an unpowered clone bay with dead crew waiting shows its two-line banner", function()
+    local raw = raw_with_systems()
+    raw.texts = { warning_clone_off_1 = "CLONEBAY OFF", warning_clone_off_2 = "CREW ARE DYING!" }
+    local clonebay = {
+        type = 13,
+        room = 3,
+        power = 1,
+        level = 1,
+        cap = 1,
+        damage = 0,
+        ion = 0,
+        uses_reactor = true,
+    }
+    raw.player.systems[#raw.player.systems + 1] = clonebay
+    raw.player.clone_queue = 1
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil) -- powered: cloning goes on
+    clonebay.power = 0
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, { "CLONEBAY OFF CREW ARE DYING!" })
+    raw.player.backup_dna = true -- the augment keeps them
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil)
+    raw.player.backup_dna, raw.player.clone_queue = false, 0
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil)
+end)
+
+t.test("a hazard beacon shows the text under its first hazard icon", function()
+    local raw = raw_with_systems()
+    raw.texts = { warning_environment_danger = "DANGER!", warning_pds_allies = "ALLIES!" }
+    local function warnings()
+        return V.observe(nil, raw, {}).views.state.warnings
+    end
+    raw.hazards = { asteroids = false, sun = false, pulsar = false, pds = true, pds_target = 0 }
+    t.eq(warnings(), { "DANGER!" }) -- an ASB aimed at us
+    raw.hazards.pds_target = 1
+    t.eq(warnings(), { "ALLIES!" }) -- aimed at the enemy
+    raw.hazards.sun = true
+    t.eq(warnings(), { "DANGER!" }) -- the sun's icon comes first
+    raw.hazards = { asteroids = false, sun = false, pulsar = false, pds = false, pds_target = 0 }
+    t.eq(warnings(), nil)
+    raw.nebula = true
+    t.eq(warnings(), { "DANGER!" })
+end)
+
+t.test(
+    "an ionized system shows how long its ion lock lasts, as the blue bar on its icon does",
+    function()
+        local raw = raw_with_systems()
+        raw.player.systems[3].ion_seconds = 3.46 -- system type 3 has ion = 2 in this fixture
+        local systems = V.observe(nil, raw, {}).views.state.ship.systems
+        t.eq({ systems[3].ion, systems[3].ion_seconds, systems[1].ion_seconds }, { 2, 3.5, nil })
+    end
+)
+
 -- #12: store and upgrades.
 ---@return RawState
 local function raw_at_store()
@@ -1189,6 +1370,31 @@ t.test("upgrades list the reactor and each system's next cost", function()
         { id = "system:shields", level = 2, max_level = 8, cost = 20, affordable = true }
     )
     t.eq(u.systems[2], { id = "system:weapons", level = 3, max_level = 8, maxed = true })
+end)
+
+t.test("store items and upgrades carry the game's own text, as their hover boxes show", function()
+    local raw = raw_at_store()
+    raw.store.items[1].description = "Fires 2 shots.\n\nRequired Power: 2"
+    local shields = raw.upgrades.systems[1] -- level 2 of 8
+    shields.description = "Powers your shields."
+    shields.levels = {
+        { level = 1, text = "" }, -- the game leaves some levels blank
+        { level = 2, text = "One Shield Barrier" },
+        { level = 3, cost = 20, text = "" },
+        { level = 4, cost = 30, text = "Two Shield Barriers" },
+    }
+    local views = V.observe(nil, raw, {}).views
+    t.eq(views.store.items[1].description, "Fires 2 shots.\n\nRequired Power: 2")
+    local u = views.upgrades.systems[1]
+    t.eq({ u.description, u.levels }, {
+        "Powers your shields.",
+        {
+            { level = 1 },
+            { level = 2, text = "One Shield Barrier" },
+            { level = 3, cost = 20 },
+            { level = 4, cost = 30, text = "Two Shield Barriers" },
+        },
+    })
 end)
 
 t.test("the store shows only when a human could open it", function()
