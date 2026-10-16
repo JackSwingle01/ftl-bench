@@ -472,6 +472,21 @@ t.test("systems ionized and clearing", function()
     t.eq(events(after, before), { { type = "system_ion_cleared", system = "system:shields" } })
 end)
 
+t.test("systems damaged and repaired, with the damaged bars left", function()
+    local before, after = two_frames()
+    after.player.systems[1].damage = 2
+    t.eq(
+        events(before, after),
+        { { type = "system_damaged", system = "system:shields", damage = 2 } }
+    )
+    local fixed = two_frames()
+    fixed.player.systems[1].damage = 1 -- one bar repaired, one still down
+    t.eq(
+        events(after, fixed),
+        { { type = "system_repaired", system = "system:shields", damage = 1 } }
+    )
+end)
+
 t.test("events are lists, so they encode as JSON arrays", function()
     local before, after = two_frames()
     t.eq(getmetatable(events(before, after)).__jsontype, "array")
@@ -543,43 +558,60 @@ t.test("the map reports the sector", function()
     t.eq(map_view(raw).sector, 3)
 end)
 
-t.test("jumps lists linked beacons, fuel and FTL charge", function()
-    t.eq(V.observe(nil, raw_with_map(), {}).views.jumps, {
-        beacons = { "beacon:1", "beacon:3" },
+t.test("the map marks the beacons we can jump to now, and the drive's fuel and charge", function()
+    local map = map_view(raw_with_map())
+    local reachable = {}
+    for _, b in ipairs(map.beacons) do
+        reachable[#reachable + 1] = b.reachable and b.id or nil
+    end
+    t.eq(reachable, { "beacon:1", "beacon:3" })
+    t.eq(map.drive, { fuel = 5, ftl_charge = 1, ftl_charge_time = 1, ready = true })
+    t.eq(map.sectors, {})
+end)
+
+t.test("the drive says why it can't jump, on the map and in the state", function()
+    local raw = raw_with_map()
+    raw.player.fuel = 0
+    local d = map_view(raw).drive
+    t.eq({ d.ready, d.not_ready }, { false, "no fuel" })
+    raw = raw_with_map()
+    raw.player.ftl_charge = 0.4
+    t.eq(V.observe(nil, raw, {}).views.state.ship.ftl_drive, {
         fuel = 5,
-        ftl_charge = 1,
+        ftl_charge = 0.4,
         ftl_charge_time = 1,
-        ready = true,
-        sectors = {},
+        ready = false,
+        not_ready = "FTL drive charging",
     })
 end)
 
-t.test("jumps says why it can't jump", function()
+t.test("the drive can't charge with nobody in a level-1 Piloting room", function()
     local raw = raw_with_map()
-    raw.player.fuel = 0
-    local j = V.observe(nil, raw, {}).views.jumps --[[@as table]]
-    t.eq({ j.ready, j.not_ready }, { false, "no fuel" })
-    raw = raw_with_map()
-    raw.player.ftl_charge = 0.4
-    j = V.observe(nil, raw, {}).views.jumps --[[@as table]]
-    t.eq({ j.ready, j.not_ready }, { false, "FTL drive charging" })
+    raw.player.ftl_charge = 0
+    raw.player.crew[1].room = 1 -- Maria leaves the piloting room (room 0)
+    local d = map_view(raw).drive
+    t.eq({ d.ready, d.not_ready }, { false, "Piloting is unmanned" })
 end)
 
-t.test("at the exit, jumps offers the next sectors by type only", function()
+t.test("at the exit, the map offers the next sectors by type only", function()
     local raw = raw_with_map()
     raw.map.current = 2
     raw.map.sector_choices = { { index = 5, type = 1 }, { index = 6, type = 2 } }
-    t.eq(V.observe(nil, raw, {}).views.jumps.sectors, {
+    t.eq(map_view(raw).sectors, {
         { id = "sector:5", type = "hostile" },
         { id = "sector:6", type = "nebula" },
     })
 end)
 
-t.test("jumps is not ready while an event is open", function()
+t.test("the drive is not ready while an event is open", function()
     local raw = raw_with_map()
     raw.pause.event = true
-    local j = V.observe(nil, raw, {}).views.jumps --[[@as table]]
-    t.eq({ j.ready, j.not_ready }, { false, "an event is open" })
+    local d = map_view(raw).drive
+    t.eq({ d.ready, d.not_ready }, { false, "an event is open" })
+    raw = raw_with_map()
+    raw.event = { text = "Greetings", choices = {}, received = {} } -- a box without the event pause
+    d = map_view(raw).drive
+    t.eq({ d.ready, d.not_ready }, { false, "an event is open" })
 end)
 
 t.test("arriving at a beacon and entering a sector make events", function()
@@ -662,6 +694,13 @@ t.test("the state says why the game is paused", function()
     local state = V.observe(nil, raw, {}).views.state
     t.eq({ state.paused, state.paused_by }, { true, { "player", "menu" } })
     t.eq(V.observe(nil, raw_in_run(), {}).views.state.paused_by, nil)
+end)
+
+t.test("an event box shown without the game's event pause still reads as an event", function()
+    local raw = raw_in_run()
+    raw.pause.menu = true -- seen live: a store's greeting box sets only the menu pause
+    raw.event = { text = "Greetings", choices = {}, received = {} }
+    t.eq(V.observe(nil, raw, {}).views.state.paused_by, { "event" })
 end)
 
 t.test("an event window is reported as an event, not also as a menu", function()

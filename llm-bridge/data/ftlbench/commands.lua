@@ -41,14 +41,6 @@ local WINDOW_SAFE = {
     show = true,
 }
 
----A shown event box blocks the ship even when the game's event pause isn't set (seen live:
----a store's greeting box left it clear, and the Agent bought before answering it).
----@param raw RawState
----@return boolean
-local function event_open(raw)
-    return raw.pause.event or raw.event ~= nil
-end
-
 ---Why `buy` or `upgrade` can't use its window, or nil when it is open.
 ---@param raw RawState
 ---@param window string "store" or "upgrades"
@@ -636,7 +628,7 @@ local handlers = {
         return { kind = "pause" }
     end,
     unpause = function(_, raw)
-        if event_open(raw) then
+        if FtlBench.Visibility.event_open(raw) then
             return nil, "an event is open; answer it first"
         elseif raw.pause.menu then
             return nil, "a game window is open (store, upgrades or menu); close it first"
@@ -669,7 +661,8 @@ local handlers = {
     buy = plan_buy,
     upgrade = plan_upgrade,
     close = function(_, raw)
-        if not raw.window then
+        -- Any window but an event: ours, or one the game opened itself (its pause menu).
+        if not raw.window and not (raw.pause.menu and not FtlBench.Visibility.event_open(raw)) then
             return nil, "no window is open"
         end
         return { kind = "close" }
@@ -712,9 +705,14 @@ function Commands.plan(text, raw)
     end
     if not raw.in_run then
         return nil, "no Run in progress"
-    elseif event_open(raw) and not EVENT_SAFE[name] then
+    elseif FtlBench.Visibility.event_open(raw) and not EVENT_SAFE[name] then
         return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
-    elseif raw.pause.menu and not event_open(raw) and not WINDOW_SAFE[name] then
+    elseif
+        raw.pause.menu
+        and not FtlBench.Visibility.event_open(raw)
+        and not WINDOW_SAFE[name]
+        and not (name == "jump" and raw.window == "map") -- players jump from the map
+    then
         return nil, "a game window is open; close it first" -- hotkeys go to the window, not the ship
     end
     return handler(words, raw)

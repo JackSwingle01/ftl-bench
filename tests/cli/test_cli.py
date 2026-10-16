@@ -239,6 +239,13 @@ class CliTest(unittest.TestCase):
         for topic in ("Goal", "Rebel fleet", "Resources", "Systems", "Weapons", "Crew"):
             self.assertIn(topic, r.stdout)
 
+    def test_help_lists_the_views_and_commands_without_a_running_game(self) -> None:
+        r = self.ftl("help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for usage in ("ftl state", "ftl map", "power <system>", "jump <beacon>", "choose <choice>"):
+            self.assertIn(usage, r.stdout)
+        self.assertNotIn("ftl jumps", r.stdout)
+
     def test_primer_and_task_prompt_give_no_strategy_advice(self) -> None:
         prompts = FTL.parents[1] / "prompts"
         advice = ("should", "best", "recommend", "prioriti", "tip", "strategy", "good idea")

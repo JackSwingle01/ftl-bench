@@ -364,10 +364,10 @@ class LiveNavigationTest(unittest.TestCase):
 
     def test_jump_to_a_linked_beacon_uses_one_fuel(self) -> None:
         answer_events()
-        jumps = view("jumps")
-        if not jumps["ready"]:
-            self.skipTest(f"can't jump here: {jumps.get('not_ready')}")
-        target, fuel = pick_jump(jumps), jumps["fuel"]
+        ftl_drive = drive()
+        if not ftl_drive["ready"]:
+            self.skipTest(f"can't jump here: {ftl_drive.get('not_ready')}")
+        target, fuel = pick_jump(), ftl_drive["fuel"]
         r = ftl("jump", target)
         self.assertEqual(r.returncode, 0, r.stderr)
         answer_events_and_unpause(self)
@@ -378,7 +378,7 @@ class LiveNavigationTest(unittest.TestCase):
             if current == target:
                 break
         self.assertEqual(current, target)
-        self.assertEqual(view("jumps")["fuel"], fuel - 1)
+        self.assertEqual(drive()["fuel"], fuel - 1)
 
     def test_jump_refuses_unlinked_beacons(self) -> None:
         here = next(b for b in view("map")["beacons"] if b.get("current"))
@@ -404,10 +404,10 @@ class LiveEventChoiceTest(unittest.TestCase):
 
     def test_an_event_shows_choices_and_choose_answers_it(self) -> None:
         answer_events()
-        jumps = view("jumps")
-        if not jumps["ready"]:
-            self.skipTest(f"can't jump to reach an event: {jumps.get('not_ready')}")
-        self.assertEqual(ftl("jump", pick_jump(jumps)).returncode, 0)
+        ftl_drive = drive()
+        if not ftl_drive["ready"]:
+            self.skipTest(f"can't jump to reach an event: {ftl_drive.get('not_ready')}")
+        self.assertEqual(ftl("jump", pick_jump()).returncode, 0)
         ftl("unpause")
         event = None
         for _ in range(100):
@@ -434,11 +434,16 @@ class LiveEventChoiceTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr.strip()), (1, "no event is open"))
 
 
-def pick_jump(jumps: dict[str, Any], prefer: str | None = None) -> str:
-    """A linked beacon to jump to: one with the `prefer` marker if any, else the one furthest from
-    the rebel fleet (most jumps until it arrives, then furthest right)."""
-    beacons = {b["id"]: b for b in view("map")["beacons"]}
-    options = [beacons[i] for i in jumps["beacons"]]
+def drive() -> dict[str, Any]:
+    """The FTL drive's status from `ftl state` (reading the map would open its window)."""
+    return state()["ship"]["ftl_drive"]
+
+
+def pick_jump(prefer: str | None = None) -> str:
+    """A reachable beacon to jump to: one with the `prefer` marker if any, else the one furthest
+    from the rebel fleet (most jumps until it arrives, then furthest right). Leaves the map open,
+    which is where a jump is made from."""
+    options = [b for b in view("map")["beacons"] if b.get("reachable")]
     marked = [b for b in options if prefer and b.get(prefer)]
     if marked:
         return marked[0]["id"]
@@ -462,16 +467,20 @@ def fight_back() -> None:
 
 
 def wait_until_jump_ready(limit: float = 90) -> dict[str, Any]:
-    """Let the game run (answering events, fighting back) until the FTL drive is ready."""
-    jumps = view("jumps")
+    """Let the game run (answering events, fighting back) until the FTL drive is ready; returns
+    the drive status."""
+    ftl_drive = drive()
     deadline = time.monotonic() + limit
-    while not jumps["ready"] and time.monotonic() < deadline:
+    while not ftl_drive["ready"] and time.monotonic() < deadline:
         answer_events()
+        if "Piloting" in (ftl_drive.get("not_ready") or ""):  # earlier tests moved the pilot away
+            aboard = [c for c in state()["ship"]["crew"] if not c["room"].startswith("enemy:")]
+            walk(aboard[0]["id"], system("piloting")["room"])
         fight_back()
         ftl("unpause")
         time.sleep(1)
-        jumps = view("jumps")
-    return jumps
+        ftl_drive = drive()
+    return ftl_drive
 
 
 def find_enemy() -> dict[str, Any] | None:
@@ -624,9 +633,9 @@ def leave_any_fight() -> None:
         enemy = state().get("enemy")
         if not enemy or not enemy.get("hostile"):
             return
-        jumps = wait_until_jump_ready()
-        if jumps["ready"]:
-            act("jump", pick_jump(jumps))
+        ftl_drive = wait_until_jump_ready()
+        if ftl_drive["ready"]:
+            act("jump", pick_jump())
             ftl("unpause")
             time.sleep(3)
             answer_events()
@@ -648,6 +657,7 @@ class LiveUpgradeTest(unittest.TestCase):
 
     def test_upgrade_a_system_and_the_reactor(self) -> None:
         answer_events()
+        leave_any_fight()  # the game won't open the upgrades window during some fights
         give_scrap(200)
         self.assertNotEqual(ftl("upgrade", "reactor").returncode, 0)  # window not open yet
         upgrades = view("upgrades")
@@ -677,10 +687,10 @@ def find_store() -> dict[str, Any] | None:
         r = ftl("store")
         if r.returncode == 0:
             return json.loads(r.stdout)
-        jumps = wait_until_jump_ready()
-        if not jumps["ready"]:
+        ftl_drive = wait_until_jump_ready()
+        if not ftl_drive["ready"]:
             return None
-        if ftl("jump", pick_jump(jumps, prefer="store")).returncode != 0:
+        if ftl("jump", pick_jump(prefer="store")).returncode != 0:
             return None
         ftl("unpause")
         for _ in range(100):
@@ -798,7 +808,9 @@ class LiveAbilityTest(unittest.TestCase):
         if "hacking" not in have:
             # The game registers a new hacking drone with space on the next jump (as after buying).
             leave_any_fight()
-            act("jump", pick_jump(wait_until_jump_ready()))
+            if not wait_until_jump_ready()["ready"]:
+                raise unittest.SkipTest("could not jump to register the hacking drone")
+            act("jump", pick_jump())
             ftl("unpause")
             time.sleep(3)
         give_scrap(200)
