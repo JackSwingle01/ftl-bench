@@ -159,6 +159,7 @@ FtlBench = FtlBench or {}
 ---@field map RawMap?
 ---@field event RawEvent?    the open event window, if any
 ---@field enemy RawEnemy?
+---@field boarders RawCrew[]? enemy crew aboard our ship after their ship has gone
 ---@field autofire boolean?
 ---@field store { open: boolean, items: RawStoreItem[] }?  the store at this beacon, if any
 ---@field upgrades RawUpgrades?
@@ -442,7 +443,7 @@ end
 local function observe_intruders(raw, lit, view)
     view.intruders = setmetatable({}, LIST)
     local sense = senses_lifeforms(raw)
-    for _, c in ipairs(raw.enemy and raw.enemy.crew or {}) do
+    for _, c in ipairs(raw.enemy and raw.enemy.crew or raw.boarders or {}) do
         if c.on_enemy_ship and not c.dead then
             view.intruders_detected = true
             local in_sight = lit == nil or lit[c.room] == true

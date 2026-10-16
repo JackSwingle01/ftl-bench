@@ -2,7 +2,7 @@
 # Development loop: close FTL, reinstall the mod with dev tools, relaunch, and let the
 # dev autostart press Continue (or New Game). Waits until a Run is live.
 # Usage: scripts/dev-run [continue|new [seed]|fresh [seed]]
-#   "new" moves any saved Run to hs_continue.sav.dev-bak and answers the intro event;
+#   "new" moves any saved Run to hs_continue.sav.dev-bak-<time> and answers the intro event;
 #   "fresh" is a new Run that leaves the intro event open for the caller to answer.
 set -euo pipefail
 MODE="${1:-continue}"
@@ -27,7 +27,7 @@ rm -f "$SAVE/ftlbench/live/state.json"
 # so set the saved Run aside. hs_continue.sav is Hyperspace's save (only this modded copy uses it);
 # move rather than delete anyway.
 if [[ "$MODE" != "continue" && -f "$SAVE/hs_continue.sav" ]]; then
-    mv "$SAVE/hs_continue.sav" "$SAVE/hs_continue.sav.dev-bak"
+    mv -n "$SAVE/hs_continue.sav" "$SAVE/hs_continue.sav.dev-bak-$(date +%Y%m%d-%H%M%S)" # never overwrite an older one
 fi
 open "$ROOT/game/FTL.app"
 for _ in $(seq 1 120); do

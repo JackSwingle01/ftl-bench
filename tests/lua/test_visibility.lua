@@ -1051,6 +1051,15 @@ t.test("boarders on our ship: the warning always, details in rooms we can see", 
     t.eq({ ship.intruders_detected, #ship.intruders }, { true, 0 })
 end)
 
+t.test("boarders left behind when their ship jumps away are still intruders", function()
+    local raw = raw_with_enemy()
+    local boarder = raw.enemy.crew[2]
+    boarder.on_enemy_ship, boarder.room = true, 2
+    raw.enemy, raw.boarders = nil, { boarder } -- the ship has gone; its crew aboard ours hasn't
+    local ship = V.observe(nil, raw, {}).views.state.ship
+    t.eq({ ship.intruders_detected, #ship.intruders }, { true, 1 })
+end)
+
 -- #6 review: leaks that must stay closed.
 t.test("a cloak hides even the hacked system's details", function()
     local raw = raw_with_enemy()

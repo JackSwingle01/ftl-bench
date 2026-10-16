@@ -1,4 +1,4 @@
--- DEVELOPMENT ONLY: test fixtures. Reads ftlbench/dev_give ("scrap 100", "event STORE" or "system 10"),
+-- DEVELOPMENT ONLY: test fixtures. Reads ftlbench/dev_give ("scrap 100", "event STORE", "system 10" or "hull"),
 -- applies it once and deletes it.
 script.on_internal_event(Defines.InternalEvents.ON_TICK, function()
     local f = io.open("ftlbench/dev_give", "r")
@@ -12,7 +12,10 @@ script.on_internal_event(Defines.InternalEvents.ON_TICK, function()
     local event = line:match("^event ([%w_]+)$")
     local system = tonumber(line:match("^system (%d+)$"))
     local ship = Hyperspace.ships.player
-    if amount and ship then
+    if line == "hull" and ship then
+        ship:DamageHull(-ship.ship.hullIntegrity.second, true) -- negative damage repairs, capped at max
+        print("[ftlbench] dev: repaired the hull")
+    elseif amount and ship then
         ship:ModifyScrapCount(amount, false)
         print("[ftlbench] dev: gave " .. amount .. " scrap")
     elseif system and ship then

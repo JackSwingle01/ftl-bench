@@ -552,6 +552,9 @@ local function read_raw()
         doors, door_objects = read_doors(ship)
         raw.player.doors = doors
         raw.player.crew, crew_objects = read_crew(ship)
+        if not Hyperspace.ships.enemy then -- boarders outlive a ship that jumps away
+            raw.boarders = read_crew(ship, 1)
+        end
         mark_damage(raw.player.crew)
         local p = raw.player --[[@as RawShip]]
         local pm = Hyperspace.PowerManager.GetPowerManager(0)

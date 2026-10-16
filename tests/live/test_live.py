@@ -345,6 +345,8 @@ def open_upgrades() -> dict[str, Any]:
         if "menu" in (state().get("paused_by") or []):
             return upgrades
         answer_events()
+    if state()["ship"].get("intruders_detected"):
+        raise unittest.SkipTest("intruders aboard: the game won't open the upgrades window")
     raise AssertionError("the upgrades window would not open")
 
 
@@ -780,6 +782,17 @@ class LiveGameOverTest(unittest.TestCase):
         )
 
 
+def repair_hull() -> None:
+    """Dev-probe fixture: repair the hull to full."""
+    request = runs_dir().parent / "dev_give"
+    request.write_text("hull\n")
+    for _ in range(50):
+        time.sleep(0.1)
+        if not request.exists():
+            return
+    raise AssertionError("the dev fixture did not repair the hull")
+
+
 def give_system(type_id: int) -> None:
     """Dev-probe fixture: install a system in the ship's room for it."""
     request = runs_dir().parent / "dev_give"
@@ -845,6 +858,9 @@ class LiveAbilityTest(unittest.TestCase):
             time.sleep(3)
         if not find_enemy():
             raise unittest.SkipTest("no hostile enemy")
+
+    def setUp(self) -> None:
+        repair_hull()  # the fight runs through every test here; keep the ship alive for the next
 
     def ability(self, name: str) -> dict[str, Any]:
         return state()["ship"]["abilities"].get(name, {})
