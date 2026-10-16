@@ -1,7 +1,8 @@
 """Scripted integration test against the real, running game (seam 4).
 
-Needs FTL open with the mod installed and a Run in progress (start a new Run first).
-Run: python3 -m unittest -v tests/live/test_live.py
+Starts a fresh dev Run first (scripts/dev-run new), since tests change the ship and leave fights
+behind. Set FTL_LIVE_REUSE=1 to run against the Run already in progress instead.
+Run: caffeinate -i python3 -m unittest -v tests/live/test_live.py
 """
 
 import json
@@ -14,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 FTL = Path(__file__).resolve().parents[2] / "bin" / "ftl"
+DEV_RUN = FTL.parents[1] / "scripts" / "dev-run"
+
+
+def setUpModule() -> None:
+    if os.environ.get("FTL_LIVE_REUSE") != "1":
+        subprocess.run([str(DEV_RUN), "new"], check=True, capture_output=True, timeout=300)
 
 
 def ftl(*args: str) -> subprocess.CompletedProcess[str]:

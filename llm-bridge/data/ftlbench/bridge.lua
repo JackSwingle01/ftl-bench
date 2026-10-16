@@ -246,9 +246,6 @@ local function read_armaments(ship)
     return weapons, drones, weapon_objs, drone_objs
 end
 
--- Beacons the ship has been next to this sector: their store/distress markers stay visible.
-local scouted, scouted_sector = {}, nil
-
 ---@param loc any Location
 ---@return string
 local function loc_key(loc)
@@ -256,12 +253,8 @@ local function loc_key(loc)
 end
 
 ---@param sm any StarMap
----@param sector integer
 ---@return RawMap
-local function read_map(sm, sector)
-    if scouted_sector ~= sector then
-        scouted, scouted_sector = {}, sector
-    end
+local function read_map(sm)
     local index = {}
     for i = 0, sm.locations:size() - 1 do
         index[loc_key(sm.locations[i])] = i
@@ -274,9 +267,6 @@ local function read_map(sm, sector)
         for j = 0, loc.connectedLocations:size() - 1 do
             local other = index[loc_key(loc.connectedLocations[j])]
             links[#links + 1] = other
-            if i == current then
-                scouted[other] = true
-            end
         end
         beacons[#beacons + 1] = {
             id = i,
@@ -289,7 +279,9 @@ local function read_map(sm, sector)
             nebula = loc.nebula,
             store = loc.event ~= nil and loc.event.store,
             distress = loc.event ~= nil and loc.event.distressBeacon,
-            scouted = scouted[i],
+            -- The game's own flag: set once the ship is next to the beacon, kept in the save, so its
+            -- store/distress markers stay (visible-state.md Q13).
+            scouted = loc.known,
         }
     end
     local choices
@@ -554,8 +546,9 @@ local function read_raw()
             hull_max = int(ship.ship.hullIntegrity.second),
             scrap = int(ship.currentScrap),
             oxygen = ship:GetOxygenPercentage(),
-            -- Base power (Visibility adds the manning bonus); an ionized system gives nothing.
-            sensors_power = sensors and not sensors:Ioned(1) and int(sensors.powerState.first) or 0,
+            -- Power without the manning bonus (Visibility adds it): damage and each ion point take a
+            -- bar away (visible-state.md Q2), which the game's power state already reflects.
+            sensors_power = sensors and int(sensors.powerState.first) or 0,
             rooms = read_rooms(ship),
         }
         doors, door_objects = read_doors(ship)
@@ -579,7 +572,7 @@ local function read_raw()
         raw.enemy = enemy and read_enemy(enemy, ship) or nil
         raw.autofire = gui.combatControl.weapControl.autoFiring
         p.abilities = read_abilities(ship)
-        raw.map = read_map(app.world.starMap, raw.sector)
+        raw.map = read_map(app.world.starMap)
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
         raw.window = game_window()
@@ -1038,7 +1031,6 @@ os.remove(LIVE .. "/run.txt") -- no Run until on_init says so
 
 script.on_init(function()
     frame, game_time, prev = 0, 0.0, nil
-    scouted, scouted_sector = {}, nil -- markers seen in an earlier Run must not carry over
     health_seen, last_drop = {}, {}
     local name = "runs/" .. os.date("%Y%m%d-%H%M%S")
     run_dir = BASE .. "/" .. name

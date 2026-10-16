@@ -71,7 +71,7 @@ FtlBench = FtlBench or {}
 ---@field hull_max integer
 ---@field scrap integer
 ---@field oxygen number?          whole-ship percentage
----@field sensors_power integer?  Sensors base power without the manning bonus (0 if missing, broken or ionized)
+---@field sensors_power integer?  Sensors power without the manning bonus (damage and ion each take a bar)
 ---@field rooms RawRoom[]?
 ---@field doors RawDoor[]?
 ---@field crew RawCrew[]?         own crew only (for the enemy: its crew; on_enemy_ship = aboard our ship)
@@ -104,7 +104,7 @@ FtlBench = FtlBench or {}
 ---@field nebula boolean?
 ---@field store boolean?    true even where a human can't see it yet
 ---@field distress boolean?
----@field scouted boolean?  the ship has been next to it this sector
+---@field scouted boolean?  the game's Location.known: the ship has been next to it
 
 ---@class RawMap
 ---@field current integer
@@ -740,7 +740,10 @@ local function sensors_level(raw, enemy)
     if raw.nebula or power <= 0 then
         return 0
     end
-    local level = math.min(power + (ship.sensors_manned and 1 or 0), 4)
+    -- Damaged or ionized systems can't be manned, so they lose the manning bonus (visible-state.md Q2).
+    local sensors = index_by(ship.systems, "type")[7]
+    local hurt = sensors and (sensors.damage > 0 or sensors.ion > 0)
+    local level = math.min(power + ((ship.sensors_manned and not hurt) and 1 or 0), 4)
     return enemy.flagship and math.min(level, 2) or level
 end
 
@@ -915,7 +918,8 @@ function Visibility.enemy_view(raw)
     return raw.enemy and observe_enemy(raw, raw.enemy)
 end
 
-local SECTOR_TYPES = { "civilian", "hostile", "nebula" } -- indexed by FTL sector type + 1
+-- Indexed by FTL Sector.type + 1 (4 = unknown; visible-state.md I6).
+local SECTOR_TYPES = { "civilian", "hostile", "nebula", "unknown", "unknown" }
 
 ---Jumps until the rebel fleet's circle reaches a point, at its current advance per jump.
 ---@param fleet { x: number, y: number, radius: number, advance: number }

@@ -642,7 +642,8 @@ t.test("arriving at a beacon and entering a sector make events", function()
     t.eq(V.observe(before, after, {}).events, { { type = "new_sector", sector = 2 } })
 end)
 
--- #11: events and choices. ChoiceText type: 0 normal, 1 blue option, 2 requirement not met.
+-- #11: events and choices. ChoiceText type: 0 normal, 1 requirement not met, 2 blue option
+-- (2 inferred; see visible-state.md Q7b).
 ---@return RawState
 local function raw_with_event()
     local raw = raw_with_systems()
@@ -933,6 +934,25 @@ t.test("broken Sensors and nebulas give level 0; the Flagship caps it at 2", fun
     raw = raw_with_enemy()
     raw.player.sensors_power, raw.player.sensors_manned, raw.enemy.flagship = 3, true, true
     t.eq(enemy_view(raw).sensors_level, 2)
+end)
+
+t.test("damaged or ionized Sensors can't be manned, so they lose the manning bonus", function()
+    for _, hurt in ipairs({ { damage = 1, ion = 0 }, { damage = 0, ion = 1 } }) do
+        local raw = raw_with_enemy()
+        raw.player.sensors_power, raw.player.sensors_manned = 1, true -- level 2 with 1 bar down
+        raw.player.systems = raw.player.systems or {}
+        raw.player.systems[#raw.player.systems + 1] = {
+            type = 7,
+            room = 0,
+            power = 1,
+            level = 2,
+            cap = 2,
+            damage = hurt.damage,
+            ion = hurt.ion,
+            uses_reactor = false,
+        }
+        t.eq(enemy_view(raw).sensors_level, 1)
+    end
 end)
 
 t.test("our crew aboard give vision of their room only", function()
