@@ -291,6 +291,31 @@ local function dump()
             h.currentSystem and h.currentSystem.iSystemType
         )
     end
+    -- Which windows are open, to tell a stuck menu pause apart (pcall: some need a newer fork).
+    local cgui = Hyperspace.App.gui
+    p(
+        "== windows",
+        "menu_pause",
+        cgui.menu_pause,
+        "event_pause",
+        cgui.event_pause,
+        "choiceBox",
+        cgui.choiceBoxOpen
+    )
+    for _, name in ipairs({
+        "shipScreens",
+        "storeScreens",
+        "menuBox",
+        "optionsBox",
+        "inputBox",
+        "equipScreen",
+    }) do
+        local ok, open = pcall(function()
+            return cgui[name].bOpen
+        end)
+        p(name, ok and tostring(open) or "?")
+    end
+    p("starMap", Hyperspace.App.world.starMap.bOpen)
     local f = assert(io.open("ftlbench/probe.txt", "w"))
     f:write(table.concat(out, "\n") .. "\n")
     f:close()
