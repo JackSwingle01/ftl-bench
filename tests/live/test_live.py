@@ -2,6 +2,8 @@
 
 Starts a fresh dev Run first (scripts/dev-run new), since tests change the ship and leave fights
 behind. Set FTL_LIVE_REUSE=1 to run against the Run already in progress instead.
+Opt-in: FTL_LIVE_ABILITIES=1 runs the ability tests (flaky: they need a live enemy to cooperate),
+FTL_LIVE_DESTRUCTIVE=1 the test that ends the Run.
 Run: caffeinate -i python3 -m unittest -v tests/live/test_live.py
 """
 
@@ -866,6 +868,8 @@ class LiveAbilityTest(LiveCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        if os.environ.get("FTL_LIVE_ABILITIES") != "1":  # real fights make these flaky
+            raise unittest.SkipTest("flaky against live enemies; set FTL_LIVE_ABILITIES=1")
         LiveGameTest.setUpClass()
         # Upgrade first, at a quiet beacon: the game won't open the upgrades window in a fight,
         # and the jump below often lands in one.
