@@ -422,6 +422,7 @@ local function ability(raw, name)
     return (raw.player.abilities or {})[name] or {}
 end
 
+---True while the enemy's Zoltan super shield is up: it blocks hacking, mind control and teleporting.
 ---@param raw RawState
 ---@return boolean
 local function zoltan_up(raw)

@@ -1114,7 +1114,7 @@ local function warnings(raw, ship)
     local p = raw.player --[[@as RawShip]]
     local out = nil
     local systems = index_by(p.systems or {}, "type")
-    local shields, engines, clonebay = systems[0], systems[1], systems[13]
+    local shields, engines, clonebay = systems[0], systems[1], systems[13] -- 13: Clone Bay
     local hazard = hazard_text(raw)
     local hull = p.hull / math.max(p.hull_max, 1)
     for _, w in ipairs({
@@ -1133,7 +1133,7 @@ local function warnings(raw, ship)
             "warning_clone_off_1",
             "warning_clone_off_2",
         },
-        { hazard, hazard },
+        { hazard ~= nil, hazard }, -- the text under the first hazard icon, if any
     }) do
         if w[1] then
             out = out or setmetatable({}, LIST)
