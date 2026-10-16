@@ -593,6 +593,26 @@ t.test("the drive can't charge with nobody in a level-1 Piloting room", function
     t.eq({ d.ready, d.not_ready }, { false, "Piloting is unmanned" })
 end)
 
+t.test("the drive can't charge with Piloting or Engines out of power", function()
+    local raw = raw_with_map()
+    raw.player.ftl_charge = 0
+    raw.player.systems[2].power = 0 -- piloting (type 6)
+    t.eq(map_view(raw).drive.not_ready, "Piloting has no power")
+    raw = raw_with_map()
+    raw.player.ftl_charge = 0
+    raw.player.systems[#raw.player.systems + 1] = {
+        type = 1,
+        room = 1,
+        power = 0,
+        level = 2,
+        cap = 2,
+        damage = 2,
+        ion = 0,
+        uses_reactor = true,
+    }
+    t.eq(map_view(raw).drive.not_ready, "Engines have no power")
+end)
+
 t.test("at the exit, the map offers the next sectors by type only", function()
     local raw = raw_with_map()
     raw.map.current = 2

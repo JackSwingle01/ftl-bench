@@ -971,8 +971,14 @@ function Visibility.jump_blocker(raw)
     elseif (ship.fuel or 0) < 1 then
         return "no fuel"
     elseif (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1) then
-        local piloting = index_by(ship.systems, "type")[6]
-        if piloting and piloting.level == 1 then
+        local systems = index_by(ship.systems, "type")
+        local piloting, engines = systems[6], systems[1]
+        -- The drive charges only with both systems running (damage and ion both take power away).
+        if piloting and piloting.power < 1 then
+            return "Piloting has no power (the FTL drive needs it to charge)"
+        elseif engines and engines.power < 1 then
+            return "Engines have no power (the FTL drive needs them to charge)"
+        elseif piloting and piloting.level == 1 then
             local manned = false
             for _, c in ipairs(ship.crew or {}) do
                 manned = manned or (c.room == piloting.room and not c.on_enemy_ship)
