@@ -181,6 +181,29 @@ t.test("door needs a working door system", function()
     t.eq(C.plan("door door:1 open", raw), { kind = "door", doors = { 1 }, open = true })
 end)
 
+-- #16: a move the game accepted but the crew member never finished.
+t.test("a move not finished within 30 game seconds becomes a command_failed event", function()
+    local raw = raw_with_interior()
+    local moves = { [101] = { room = 2, enemy = false, at = 10, command = "move crew:101 room:2" } }
+    t.eq(C.failed_moves(moves, raw, 39), {})
+    t.eq(C.failed_moves(moves, raw, 41), {
+        {
+            type = "command_failed",
+            command = "move crew:101 room:2",
+            reason = "crew:101 (Maria) did not reach room:2 within 30s",
+        },
+    })
+    t.eq(moves, {}) -- reported once
+end)
+
+t.test("an arrived move is forgotten without an event", function()
+    local raw = raw_with_interior()
+    raw.player.crew[1].room = 2
+    local moves = { [101] = { room = 2, enemy = false, at = 10, command = "move crew:101 room:2" } }
+    t.eq(C.failed_moves(moves, raw, 100), {})
+    t.eq(moves, {})
+end)
+
 -- #4: power, weapon, drone. Reactor 5 of 8 used (3 free).
 -- Systems: shields 2/2, piloting (subsystem), weapons 1 power with cap 3, engines ionized 1/2, drones 1/2.
 local function raw_with_systems()

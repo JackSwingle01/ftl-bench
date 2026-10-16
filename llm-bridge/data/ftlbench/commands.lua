@@ -720,4 +720,37 @@ function Commands.plan(text, raw)
     return handler(words, raw)
 end
 
+local MOVE_TIMEOUT = 30 -- game seconds for an accepted move before it counts as failed
+
+---Moves the game accepted that the crew member hasn't finished. Arrived moves are dropped; those
+---older than MOVE_TIMEOUT become command_failed events (reported once, then dropped).
+---@param moves table<integer, { room: integer, enemy: boolean, at: number, command: string }>
+---@param raw RawState
+---@param now number game time
+---@return table[] events
+function Commands.failed_moves(moves, raw, now)
+    local events = {}
+    for uid, m in pairs(moves) do
+        local crew = find_crew(raw, uid)
+        local arrived = crew and crew.room == m.room and (crew.on_enemy_ship or false) == m.enemy
+        if not crew or arrived then
+            moves[uid] = nil
+        elseif now - m.at > MOVE_TIMEOUT then
+            moves[uid] = nil
+            events[#events + 1] = {
+                type = "command_failed",
+                command = m.command,
+                reason = ("crew:%d (%s) did not reach %sroom:%d within %ds"):format(
+                    uid,
+                    crew.name,
+                    m.enemy and "enemy:" or "",
+                    m.room,
+                    MOVE_TIMEOUT
+                ),
+            }
+        end
+    end
+    return events
+end
+
 FtlBench.Commands = Commands

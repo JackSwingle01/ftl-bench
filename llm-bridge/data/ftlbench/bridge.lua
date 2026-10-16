@@ -346,6 +346,9 @@ end
 -- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
 -- The game opens a window a frame or so after its key press, so a `show` waits a few frames
 -- (pending) before counting the window as refused (the game won't open some mid-fight).
+-- Accepted moves by crew uid, until the crew member arrives (or command_failed reports it).
+local pending_moves = {}
+
 local SHOW_GRACE_FRAMES = 5
 local pending_window, pending_frames, refused_window = nil, 0, nil
 local pressed_window = nil -- the window our last `show` key press was for
@@ -825,6 +828,10 @@ local function handle_inbox(raw)
                     err = "internal error: " .. tostring(result)
                 end
             end
+            if cmd and cmd.kind == "move" and not err then
+                pending_moves[cmd.crew] =
+                    { room = cmd.room, enemy = cmd.enemy, at = raw.game_time, command = text }
+            end
             if cmd and cmd.kind == "show" and not err and pending_window then
                 raw.window, raw.pause.menu = pending_window, true -- later lines this tick see it
             end
@@ -985,6 +992,11 @@ local function tick()
         end
     end
     local out = Visibility.observe(prev, raw, take_hooks())
+    if raw.in_run then
+        for _, e in ipairs(Commands.failed_moves(pending_moves, raw, raw.game_time)) do
+            out.events[#out.events + 1] = e
+        end
+    end
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
