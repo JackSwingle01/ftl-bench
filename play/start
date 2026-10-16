@@ -2,11 +2,15 @@
 # Play a Run with an Agent from this folder: installs the mod without dev tools, opens FTL, waits
 # for you to start a Run, then starts Claude Code here with the task prompt, allowed only `ftl`
 # and `jq`. Usage: play/start [model]   (default: the Claude Code default model)
+# FTLBENCH_CONSOLE_COMMANDS=off stops printing each Command to the game console (on by default).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 pkill -f "$ROOT/game/FTL.app" && sleep 2 || true
-rm -f "$HOME/Library/Application Support/FasterThanLight/hs_crash.flag"
+SAVE="$HOME/Library/Application Support/FasterThanLight"
+rm -f "$SAVE/hs_crash.flag"
+mkdir -p "$SAVE/ftlbench"
+echo "${FTLBENCH_CONSOLE_COMMANDS:-on}" > "$SAVE/ftlbench/console_commands"
 "$ROOT/scripts/install-mod" >/dev/null
 open "$ROOT/game/FTL.app"
 echo "Start a Run in FTL (New Game); waiting..."

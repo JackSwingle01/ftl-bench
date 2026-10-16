@@ -9,9 +9,10 @@
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
 --   ftlbench/live/run.txt       the current Run folder, relative to ftlbench/
---   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run
+--   ftlbench/runs/<stamp>/actions.jsonl   Action log for that Run (each line also printed to the console)
 --   ftlbench/runs/<stamp>/events.jsonl    events for that Run (already filtered by Visibility)
 --   ftlbench/runs/<stamp>/score.json      Score record, rewritten every game-over frame so it ends final
+--   ftlbench/console_commands   "off" stops printing Commands; missing or anything else leaves it on
 --
 -- Needs our Hyperspace fork (game-over and score fields); see docs/hyperspace-fork.md.
 
@@ -995,6 +996,15 @@ local function handle_inbox(raw)
                     result = err and "error" or "ok",
                     error = err,
                 }) .. "\n")
+                -- ftlbench/console_commands: "off" stops echoing Commands to the console; default on.
+                local setting_file = io.open(BASE .. "/console_commands", "r")
+                local setting = setting_file and setting_file:read("l")
+                if setting_file then
+                    setting_file:close()
+                end
+                if setting ~= "off" then
+                    print("[ftlbench] " .. text .. ": " .. (err or "ok"))
+                end
             end
         end
     end

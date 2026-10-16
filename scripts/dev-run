@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Development loop: close FTL, reinstall the mod with dev tools, relaunch, and let the
 # dev autostart press Continue (or New Game). Waits until a Run is live.
-# Usage: scripts/dev-run [continue|new [seed]|fresh [seed]]
+# Usage: scripts/dev-run [continue|new [seed]|fresh [seed]]   (FTLBENCH_CONSOLE_COMMANDS=off to stop
+#   printing each Command to the game console)
 #   "new" moves any saved Run to hs_continue.sav.dev-bak-<time> and answers the intro event;
 #   "fresh" is a new Run that leaves the intro event open for the caller to answer.
 set -euo pipefail
@@ -17,6 +18,7 @@ rm -f "$SAVE/hs_crash.flag"
 "$ROOT/scripts/install-mod" --dev >/dev/null
 mkdir -p "$SAVE/ftlbench/live"
 echo "$MODE" > "$SAVE/ftlbench/autostart"
+echo "${FTLBENCH_CONSOLE_COMMANDS:-on}" > "$SAVE/ftlbench/console_commands" # print each Command to the console
 if [[ "$MODE" != "continue" && -n "$SEED" ]]; then
     echo "$SEED" > "$SAVE/ftlbench/run_seed" # the bridge hands it to the game's New Game
 elif [[ "$MODE" != "continue" ]]; then

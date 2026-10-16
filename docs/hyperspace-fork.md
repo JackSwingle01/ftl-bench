@@ -38,3 +38,9 @@ presses Continue (or New Game) for you, then waits until a Run is live. Dev buil
 
 `dev-run new` sets an existing saved Run aside as `hs_continue.sav.dev-bak` in the FTL save folder. To get it back,
 close FTL and rename it to `hs_continue.sav`.
+
+The bridge prints each Command it runs, with its result, to the Hyperspace console and `FTL_HS.log`, e.g.
+`[ftlbench] power shields +2: ok`. It is on by default, in every Run (the Agent never sees it). To turn it off,
+start with `FTLBENCH_CONSOLE_COMMANDS=off` (both `play/start` and `scripts/dev-run` write it to
+`ftlbench/console_commands` in the FTL save folder at each launch), or write `off` to that file mid-Run; the
+bridge reads it on every Command.
