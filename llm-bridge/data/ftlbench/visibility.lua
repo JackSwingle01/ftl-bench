@@ -983,10 +983,11 @@ function Visibility.jump_blocker(raw)
             return "Piloting has no power (the FTL drive needs it to charge)"
         elseif engines and engines.power < 1 then
             return "Engines have no power (the FTL drive needs them to charge)"
-        elseif piloting and piloting.level == 1 then
+        elseif piloting then -- at every level: the autopilot only dodges (wiki Piloting)
             local manned = false
             for _, c in ipairs(ship.crew or {}) do
-                manned = manned or (c.room == piloting.room and not c.on_enemy_ship)
+                local able = not (c.dead or c.drone or c.mind_controlled or (c.stun or 0) > 0)
+                manned = manned or (c.room == piloting.room and not c.on_enemy_ship and able)
             end
             if not manned then
                 return "Piloting is unmanned (the FTL drive charges only with a pilot)"

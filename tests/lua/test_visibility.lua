@@ -585,13 +585,27 @@ t.test("the drive says why it can't jump, on the map and in the state", function
     })
 end)
 
-t.test("the drive can't charge with nobody in a level-1 Piloting room", function()
+t.test("the drive can't charge with nobody in Piloting, at any level", function()
     local raw = raw_with_map()
     raw.player.ftl_charge = 0
     raw.player.crew[1].room = 1 -- Maria leaves the piloting room (room 0)
     local d = map_view(raw).drive
     t.eq({ d.ready, d.not_ready }, { false, "Piloting is unmanned" })
+    raw.player.systems[2].level = 2 -- the autopilot dodges unmanned but doesn't charge (seen in-game)
+    t.eq(map_view(raw).drive.not_ready, "Piloting is unmanned")
 end)
+
+t.test(
+    "stunned or mind-controlled crew and crew drones don't count as a pilot (wiki Piloting)",
+    function()
+        for _, field in ipairs({ "stun", "mind_controlled", "drone" }) do
+            local raw = raw_with_map()
+            raw.player.ftl_charge = 0
+            raw.player.crew[1][field] = field == "stun" and 3 or true -- Maria, in the piloting room
+            t.eq(map_view(raw).drive.not_ready, "Piloting is unmanned")
+        end
+    end
+)
 
 t.test("the drive can't charge with Piloting or Engines out of power", function()
     local raw = raw_with_map()

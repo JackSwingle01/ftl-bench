@@ -363,6 +363,13 @@ local function ability(raw, name)
     return (raw.player.abilities or {})[name] or {}
 end
 
+---Wording follows the game's own refusals (text_misc.xml warning_super_shield_*).
+---@param raw RawState
+---@return boolean
+local function zoltan_up(raw)
+    return raw.enemy ~= nil and (raw.enemy.zoltan or 0) > 0
+end
+
 ---@type table<string, fun(args: string[], raw: RawState): ResolvedCommand?, string?>
 local ability_handlers = {
     cloak = function(_, raw)
@@ -398,6 +405,8 @@ local ability_handlers = {
             return nil, "usage: hack <enemy:room> (launch the drone) | hack (start the pulse)"
         elseif not raw.enemy then
             return nil, "there is no enemy ship to hack"
+        elseif zoltan_up(raw) then
+            return nil, "super shields prevent hacking (enemy shields.zoltan)"
         elseif ability(raw, "hacking").launched then
             return nil, "a hacking drone is already out"
         elseif (raw.player.drone_parts or 0) < 1 then
@@ -418,6 +427,8 @@ local ability_handlers = {
         local uid, enemy = parse_id(args[1], "crew")
         if #args ~= 1 or not uid or not enemy then
             return nil, "usage: mindcontrol <enemy:crew>"
+        elseif zoltan_up(raw) then
+            return nil, "super shields block mind control (enemy shields.zoltan)"
         end
         for _, c in ipairs((FtlBench.Visibility.enemy_view(raw) or {}).crew or {}) do
             if c.id == "enemy:crew:" .. uid then
@@ -439,6 +450,8 @@ local ability_handlers = {
             return nil, "system:teleporter is still charging"
         elseif not raw.enemy or not raw.enemy.rooms[room + 1] then
             return nil, "no enemy:room:" .. room
+        elseif command == 1 and zoltan_up(raw) then -- unverified whether it also blocks return
+            return nil, "super shields prevent teleporting (enemy shields.zoltan)"
         end
         -- Send takes whoever stands on the pad; return brings back our crew from that enemy room.
         local from, aboard = command == 1 and pad.room or room, command == 2

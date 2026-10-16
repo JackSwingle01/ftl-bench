@@ -796,6 +796,26 @@ t.test("cloak and battery activate when the system is ready", function()
     t.eq(select(2, C.plan("cloak", raw_with_systems())), "no system:cloaking on this ship")
 end)
 
+t.test(
+    "a Zoltan super shield blocks hacking, mind control and teleporting over, as in the game",
+    function()
+        local raw = raw_with_abilities()
+        raw.enemy.zoltan = 2
+        t.eq(
+            select(2, C.plan("hack enemy:room:0", raw)),
+            "super shields prevent hacking (enemy shields.zoltan)"
+        )
+        t.eq(
+            select(2, C.plan("mindcontrol enemy:crew:201", raw)),
+            "super shields block mind control (enemy shields.zoltan)"
+        )
+        t.eq(
+            select(2, C.plan("teleport send enemy:room:0", raw)),
+            "super shields prevent teleporting (enemy shields.zoltan)"
+        )
+    end
+)
+
 t.test("hack launches the drone at an enemy system, then starts the pulse", function()
     local raw = raw_with_abilities()
     t.eq(C.plan("hack enemy:room:0", raw), { kind = "hack", room = 0 })
