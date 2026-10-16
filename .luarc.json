@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.3",
-  "workspace.ignoreDir": ["game", "downloads", "FTL-Hyperspace", ".tools", "save-backup-*", "run"],
+  "workspace.ignoreDir": ["game", "downloads", "FTL-Hyperspace", ".tools", "save-backup-*", "run", ".claude"],
   "diagnostics.globals": ["Hyperspace", "script", "Defines", "mods"]
 }

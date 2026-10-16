@@ -495,17 +495,20 @@ local function hover_text(name)
         local B, info = Hyperspace.Blueprints, Hyperspace.App.gui.equipScreen.infoBox
         local weapon, drone = B:GetWeaponBlueprint(name), B:GetDroneBlueprint(name)
         local augment, crew = B:GetAugmentBlueprint(name), B:GetCrewBlueprint(name)
-        -- Each getter hands back a blank blueprint for a name it doesn't know.
+        -- Unknown names get a stand-in back: a blank weapon, drone or augment, or the default crew.
+        local filled = true
         if int(weapon.power) > 0 then
             info:SetBlueprint(weapon, 0, true, 0)
         elseif int(drone.power) > 0 then
             info:SetBlueprint(drone, 0, true, 0)
-        elseif augment.desc.title:GetText() ~= "" then
+        elseif augment.name == name and augment.desc.title:GetText() ~= "" then
             info:SetBlueprint(augment)
-        elseif crew.desc.title:GetText() ~= "" then
+        elseif crew.name == name then
             info:SetBlueprint(crew, 0, false)
+        else
+            filled = false -- systems, fuel, missiles, drone parts: their description is all
         end
-        tooltips[name] = info.desc.description:GetText()
+        tooltips[name] = filled and info.desc.description:GetText():gsub("%s+$", "") or ""
         info:Clear()
     end
     return tooltips[name] ~= "" and tooltips[name] or nil
@@ -1128,11 +1131,16 @@ end)
 ---@return table<string, string>
 local function help_texts(raw)
     local help = {}
+    -- Generating a system's tooltip also hands it to the mouse, which would flash it on screen:
+    -- put back whatever the mouse was really showing.
+    local mouse = Hyperspace.Mouse
+    local tip, title, timer = mouse.tooltip, mouse.tooltipTitle, mouse.tooltipTimer
     local boxes = Hyperspace.App.gui.sysControl.sysBoxes
     for i = 0, boxes:size() - 1 do
         local box = boxes[i]
         help[Visibility.system_id(int(box.pSystem.iSystemType))] = system_tooltip(box)
     end
+    mouse.tooltip, mouse.tooltipTitle, mouse.tooltipTimer = tip, title, timer
     for kind, list in pairs({ weapon = weapon_objects, drone = drone_objects }) do
         for i, obj in ipairs(list) do
             help[kind .. ":" .. (i - 1)] = hover_text(obj.blueprint.name)
