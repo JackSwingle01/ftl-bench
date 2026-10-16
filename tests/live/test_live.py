@@ -102,10 +102,14 @@ class LiveGameTest(unittest.TestCase):
         answer_events_and_unpause(self)
         self.assertEqual(state()["paused"], False)
 
-    def test_reading_the_map_opens_a_window_that_blocks_nothing(self) -> None:
+    def test_reading_the_map_opens_a_window_that_blocks_until_closed(self) -> None:
         answer_events()
         for view_name in ("map", "upgrades"):
             self.assertEqual(ftl(view_name).returncode, 0)
+            time.sleep(0.2)
+            self.assertIn("menu", state().get("paused_by") or [])
+            self.assertNotEqual(ftl("door", "all", "open").returncode, 0)
+            self.assertEqual(ftl("close").returncode, 0)
             time.sleep(0.2)
             self.assertNotIn("menu", state().get("paused_by") or [])
         answer_events_and_unpause(self)
@@ -321,6 +325,16 @@ class LiveEventsTest(unittest.TestCase):
             self.assertIn(key, hurt)
         r = ftl("events", "history", "1")
         self.assertEqual(len(r.stdout.splitlines()), 1)
+
+
+def upgrade(target: str) -> subprocess.CompletedProcess[str]:
+    """Upgrade through the upgrades window (listing it opens it), then close it."""
+    ftl("upgrades")
+    time.sleep(0.3)
+    r = act("upgrade", target)
+    ftl("close")
+    time.sleep(0.2)
+    return r
 
 
 def view(name: str) -> dict[str, Any]:
@@ -635,10 +649,12 @@ class LiveUpgradeTest(unittest.TestCase):
     def test_upgrade_a_system_and_the_reactor(self) -> None:
         answer_events()
         give_scrap(200)
+        self.assertNotEqual(ftl("upgrade", "reactor").returncode, 0)  # window not open yet
         upgrades = view("upgrades")
+        time.sleep(0.2)
         target = next(s for s in upgrades["systems"] if not s.get("maxed"))
         scrap = state()["ship"]["scrap"]
-        r = act("upgrade", target["id"])
+        r = act("upgrade", target["id"])  # the listing above left the upgrades window open
         self.assertEqual(r.returncode, 0, r.stderr)
         time.sleep(0.2)
         after = next(s for s in view("upgrades")["systems"] if s["id"] == target["id"])
@@ -650,6 +666,7 @@ class LiveUpgradeTest(unittest.TestCase):
         time.sleep(0.2)
         self.assertEqual(view("upgrades")["reactor"]["level"], reactor["level"] + 1)
         self.assertEqual(state()["ship"]["scrap"], scrap - reactor["cost"])
+        self.assertEqual(ftl("close").returncode, 0)
 
 
 def find_store() -> dict[str, Any] | None:
@@ -690,7 +707,8 @@ class LiveStoreTest(unittest.TestCase):
         items = [i for i in view("store")["items"] if i["stock"] > 0 and i["affordable"]]
         cheapest = min(items, key=lambda i: i["cost"])
         scrap = state()["ship"]["scrap"]
-        r = act("buy", cheapest["id"])  # opens the store window first
+        time.sleep(0.3)  # listing the store opened its window
+        r = act("buy", cheapest["id"])
         self.assertEqual(r.returncode, 0, r.stderr)
         time.sleep(0.3)
         self.assertEqual(state()["ship"]["scrap"], scrap - cheapest["cost"])
@@ -785,7 +803,7 @@ class LiveAbilityTest(unittest.TestCase):
             time.sleep(3)
         give_scrap(200)
         for _ in range(4):  # spare reactor bars for the new systems
-            act("upgrade", "reactor")
+            upgrade("reactor")
         if not find_enemy():
             raise unittest.SkipTest("no hostile enemy")
 
@@ -822,7 +840,7 @@ class LiveAbilityTest(unittest.TestCase):
             self.skipTest("no hostile enemy")
         if not enemy.get("crew"):  # Sensors level 2 shows the enemy's interior
             give_scrap(100)
-            act("upgrade", "sensors")
+            upgrade("sensors")
             act("power", "sensors", "+1")
             enemy = find_enemy() or {}
         if not enemy.get("crew"):
@@ -867,9 +885,9 @@ def load_tests(
         LiveEventsTest,
         LiveNavigationTest,
         LiveEventChoiceTest,
+        LiveUpgradeTest,  # before the fights: the game won't open its windows with intruders aboard
         LiveEnemyTest,
         LiveCombatTest,
-        LiveUpgradeTest,
         LiveStoreTest,
         LiveAbilityTest,
         LiveGameOverTest,

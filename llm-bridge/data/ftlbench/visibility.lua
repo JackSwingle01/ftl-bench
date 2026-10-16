@@ -81,6 +81,8 @@ FtlBench = FtlBench or {}
 ---@field systems RawSystem[]?
 ---@field shield_layers integer?
 ---@field shield_layers_max integer?
+---@field zoltan integer? Zoltan (super) shield HP left
+---@field zoltan_max integer?
 ---@field evasion number?         percent
 ---@field fuel integer?
 ---@field missiles integer?
@@ -146,6 +148,8 @@ FtlBench = FtlBench or {}
 ---@field frame integer        bridge ticks since the Run started
 ---@field game_time number     unpaused game seconds since the Run started
 ---@field pause RawPause
+---@field window string?    "map", "upgrades" or "store" while the Agent has that window open
+---@field refused_window string?  a window the game last refused to open for `show`
 ---@field nebula boolean?
 ---@field sector integer?     1-8, shown on the HUD
 ---@field game_over boolean?
@@ -385,6 +389,9 @@ local function observe_power(ship, view)
     view.reactor = ship.reactor and { used = ship.reactor.used, max = ship.reactor.max }
     if ship.shield_layers then
         view.shields = { layers = ship.shield_layers, max_layers = ship.shield_layers_max }
+        if (ship.zoltan_max or 0) > 0 then
+            view.shields.zoltan, view.shields.max_zoltan = ship.zoltan, ship.zoltan_max
+        end
     end
     view.evasion, view.fuel = ship.evasion and round(ship.evasion), ship.fuel
     view.missiles, view.drone_parts = ship.missiles, ship.drone_parts
@@ -784,7 +791,12 @@ function observe_enemy(raw, enemy)
         destroyed = enemy.destroyed or nil,
         hull = enemy.hull,
         hull_max = enemy.hull_max,
-        shields = { layers = enemy.shield_layers, max_layers = enemy.shield_layers_max },
+        shields = {
+            layers = enemy.shield_layers,
+            max_layers = enemy.shield_layers_max,
+            zoltan = (enemy.zoltan_max or 0) > 0 and enemy.zoltan or nil,
+            max_zoltan = (enemy.zoltan_max or 0) > 0 and enemy.zoltan_max or nil,
+        },
         sensors_level = level,
         rooms = setmetatable({}, LIST),
         doors = setmetatable({}, LIST),
@@ -1039,7 +1051,10 @@ function Visibility.observe(prev, raw, hooks)
         events = setmetatable(observe_events(prev, raw, hooks), LIST),
     }
     -- A human can open the store only with no event window up and no hostile ship here.
-    local store_usable = raw.store and not raw.pause.event and not (raw.enemy and raw.enemy.hostile)
+    local store_usable = raw.store
+        and not raw.pause.event
+        and not raw.event
+        and not (raw.enemy and raw.enemy.hostile)
     out.views.store = store_usable and observe_store(raw) or nil
     out.views.upgrades = raw.upgrades and observe_upgrades(raw)
     if raw.map then

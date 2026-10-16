@@ -13,6 +13,9 @@ local function click(button)
     local x, y = math.floor(box.x + box.w / 2), math.floor(box.y + box.h / 2)
     local app = Hyperspace.App
     app:OnMouseMove(x, y, 0, 0, false, false, false)
+    -- The mouse takes window coordinates, which fullscreen scales away from the button's; the
+    -- menu acts on the button's hover flag, so set it directly.
+    button.bHover = true
     app:OnLButtonDown(x, y)
     app:OnLButtonUp(x, y)
 end

@@ -22,6 +22,7 @@ LIVE = BASE / "live"
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 # Observation views the mod writes as live/<view>.json
 VIEWS = ("state", "map", "jumps", "store", "upgrades")
+WINDOW_VIEWS = ("map", "store", "upgrades")  # reading these opens the game window too
 STALE_AFTER = 10.0  # seconds without a state update before the game counts as not running
 ANSWER_TIMEOUT = 3.0  # seconds to wait for the mod to answer a Command
 USAGE = "usage: ftl rules|state|map|jumps | ftl events [history N] | ftl <command> [args...]"
@@ -107,8 +108,8 @@ def main(args: list[str]) -> None:
         if not view.exists():
             fail("no Run in progress", 1)
         sys.stdout.write(view.read_text())
-        if args[0] in ("map", "upgrades"):
-            post(f"show {args[0]}")  # open the window too, for anyone watching; a read never waits
+        if args[0] in WINDOW_VIEWS:
+            post(f"show {args[0]}")  # open the window too, as a player would; a read never waits
         return
     if args[0] == "events":
         events(args[1:])
