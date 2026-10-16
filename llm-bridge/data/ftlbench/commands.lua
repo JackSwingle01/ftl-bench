@@ -714,7 +714,12 @@ function Commands.plan(text, raw)
         return nil, "no Run in progress"
     elseif event_open(raw) and not EVENT_SAFE[name] then
         return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
-    elseif raw.pause.menu and not event_open(raw) and not WINDOW_SAFE[name] then
+    elseif
+        raw.pause.menu
+        and not event_open(raw)
+        and not WINDOW_SAFE[name]
+        and not (name == "jump" and raw.window == "map") -- players jump from the map
+    then
         return nil, "a game window is open; close it first" -- hotkeys go to the window, not the ship
     end
     return handler(words, raw)

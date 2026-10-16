@@ -4,7 +4,7 @@
 --
 -- Files live under the FTL save folder (Hyperspace's working directory):
 --   ftlbench/live/state.json    current state view, rewritten every frame
---   ftlbench/live/map.json, jumps.json, store.json, upgrades.json   other views, every frame
+--   ftlbench/live/map.json, store.json, upgrades.json   other views, every frame
 --   ftlbench/live/inbox.txt     Commands from the CLI: id \t wall_ms \t text
 --   ftlbench/live/results.txt   answers: id \t ok [\t seconds to wait]   or   id \t error \t reason
 --   ftlbench/live/bridge_error.txt   last bridge error, if frames are failing
@@ -344,11 +344,29 @@ local function read_event(gui)
 end
 
 -- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
-local shown_window = nil
-local open_window = nil -- raw.window as of the last read (also a store the game opened itself)
-local refused_window = nil -- the window the game last refused to open (e.g. intruders aboard)
--- The game opens a window a frame or so after its key press; until then shown_window is unconfirmed.
-local shown_confirmed, shown_grace = false, 0
+-- The game opens a window a frame or so after its key press, so a `show` waits a few frames
+-- (pending) before counting the window as refused (the game won't open some mid-fight).
+local pending_window, pending_frames, refused_window = nil, 0, nil
+local pressed_window = nil -- the window our last `show` key press was for
+
+---The game window open over the ship view, read from the windows themselves (an event box sets
+---the same menu pause, so that pause alone can't tell them apart).
+---@return string?
+local function game_window()
+    local app = Hyperspace.App
+    local loc = app.world.starMap.currentLoc
+    local store = loc and loc.event and loc.event.pStore
+    if app.world.starMap.bOpen then
+        return "map"
+    elseif store and store.bOpen then
+        return "store"
+    elseif pressed_window == "upgrades" and app.gui.menu_pause and not app.gui.choiceBoxOpen then
+        -- The upgrades tab's own open flag stays false (its ship-info window isn't bound), so go by
+        -- the window pause after our key press.
+        return "upgrades"
+    end
+    return nil
+end
 
 -- Enemy crew objects by uid, for mind control (filled by read_enemy).
 local enemy_crew_objects = {}
@@ -505,17 +523,6 @@ local function read_raw()
     local gui = app and app.gui
     local ship = Hyperspace.ships.player
     local in_run = gui ~= nil and ship ~= nil and not app.menu.bOpen
-    if shown_window then
-        if gui and gui.menu_pause then
-            shown_confirmed = true
-        elseif shown_confirmed then
-            shown_window = nil -- closed by the watcher
-        elseif shown_grace > 0 then
-            shown_grace = shown_grace - 1
-        else
-            refused_window, shown_window = shown_window, nil -- the game never opened it
-        end
-    end
     ---@type RawState
     local raw = {
         in_run = in_run,
@@ -569,9 +576,19 @@ local function read_raw()
         raw.map = read_map(app.world.starMap, raw.sector)
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
-        raw.window = shown_window or (raw.store and raw.store.open and "store") or nil
+        raw.window = game_window()
+        if not pending_window and not gui.menu_pause then
+            pressed_window = nil -- that window has closed
+        end
+        if pending_window and raw.window == pending_window then
+            pending_window = nil
+        elseif pending_window and pending_frames > 0 then
+            pending_frames = pending_frames - 1
+            raw.window = raw.window or pending_window -- opening; Commands treat it as open
+        elseif pending_window then
+            refused_window, pending_window = pending_window, nil -- the game never opened it
+        end
         raw.refused_window = refused_window
-        open_window = raw.window
         raw.upgrades = read_upgrades(ship)
     end
     return raw
@@ -687,7 +704,7 @@ local function execute(cmd)
         -- Escape closes the window the way a player does, clearing the game's window pause too
         -- (Store:Close() alone left it set). Commands only allows this while a window is open.
         press(KEY_ESCAPE)
-        shown_window = nil
+        pending_window, pressed_window = nil, nil
     elseif cmd.kind == "cloak" or cmd.kind == "battery" then
         local ship = Hyperspace.ships.player
         local sys = cmd.kind == "cloak" and ship.cloakSystem or ship.batterySystem
@@ -721,12 +738,11 @@ local function execute(cmd)
         Hyperspace.App.world.playerShip:InitiateTeleport(cmd.room, cmd.command)
     elseif cmd.kind == "show" then
         -- Open the window the Agent is reading, as a player would; only over the plain ship view.
-        local gui = Hyperspace.App.gui
-        if open_window == cmd.window then
+        local gui, open = Hyperspace.App.gui, game_window()
+        if open == cmd.window then
             return nil -- already showing it
-        elseif open_window and gui.menu_pause then
+        elseif open then
             press(KEY_ESCAPE) -- swap the open window (ours or the game's store) for the new one
-            shown_window = nil
         end
         if not (gui.menu_pause or gui.event_pause) then
             local keys = { map = KEY_MAP, upgrades = KEY_UPGRADES, store = KEY_STORE }
@@ -734,8 +750,8 @@ local function execute(cmd)
                 return "no store hotkey is bound; close FTL and run scripts/install-mod"
             end
             press(keys[cmd.window])
-            shown_window, refused_window = cmd.window, nil
-            shown_confirmed, shown_grace = false, 5
+            pending_window, pending_frames, refused_window = cmd.window, 5, nil
+            pressed_window = cmd.window
         end
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
@@ -806,8 +822,8 @@ local function handle_inbox(raw)
                     err = "internal error: " .. tostring(result)
                 end
             end
-            if cmd and cmd.kind == "show" and not err and shown_window then
-                raw.window, raw.pause.menu = shown_window, true
+            if cmd and cmd.kind == "show" and not err and pending_window then
+                raw.window, raw.pause.menu = pending_window, true -- later lines this tick see it
             end
             local status = err and ("error\t" .. err)
                 or (cmd and cmd.seconds and ("ok\t" .. cmd.seconds))
@@ -969,7 +985,7 @@ local function tick()
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
-    for _, view in ipairs({ "map", "jumps", "store", "upgrades" }) do
+    for _, view in ipairs({ "map", "store", "upgrades" }) do
         if out.views[view] then
             write_atomic(LIVE .. "/" .. view .. ".json", Json.encode(out.views[view]))
         else

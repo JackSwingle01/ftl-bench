@@ -21,11 +21,11 @@ BASE = Path(
 LIVE = BASE / "live"
 PROMPTS = Path(__file__).resolve().parents[1] / "prompts"
 # Observation views the mod writes as live/<view>.json
-VIEWS = ("state", "map", "jumps", "store", "upgrades")
+VIEWS = ("state", "map", "store", "upgrades")
 WINDOW_VIEWS = ("map", "store", "upgrades")  # reading these opens the game window too
 STALE_AFTER = 10.0  # seconds without a state update before the game counts as not running
 ANSWER_TIMEOUT = 3.0  # seconds to wait for the mod to answer a Command
-USAGE = "usage: ftl rules|state|map|jumps | ftl events [history N] | ftl <command> [args...]"
+USAGE = "usage: ftl help|rules|state|map | ftl events [history N] | ftl <command> [args...]"
 
 
 def fail(message: str, code: int) -> NoReturn:
@@ -101,6 +101,11 @@ def main(args: list[str]) -> None:
         fail(USAGE, 1)
     if args == ["rules"]:
         sys.stdout.write((PROMPTS / "primer.md").read_text())
+        return
+    if args == ["help"]:  # the task prompt's views, Commands and IDs, so they never drift apart
+        task = (PROMPTS / "task.md").read_text()
+        start, end = task.index("## Reading the game"), task.index("## Rules for you")
+        sys.stdout.write(task[start:end])
         return
     require_game()
     if len(args) == 1 and args[0] in VIEWS:

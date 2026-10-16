@@ -25,10 +25,12 @@ An open event window keeps the game paused until you answer it.
   the game is paused, the game time and the sector. Use `jq` or any tool you like to filter it.
 - `ftl events`: everything that happened since you last ran `ftl events`, one JSON object per line.
 - `ftl events history N`: the last N events, whether or not you have read them.
-- `ftl map`, `ftl jumps`, `ftl store`, `ftl upgrades`: the sector map, the beacons you can jump to
-  now, the store's stock, and the upgrades on offer. Each also opens that window on screen, as it
-  would for a player (not during an event). While a window is open every other Command is
-  refused until you `close` it.
+- `ftl map`, `ftl store`, `ftl upgrades`: the sector map (beacons you can jump to now are marked
+  `reachable`, and `drive` says whether the FTL drive is ready), the store's stock, and the
+  upgrades on offer. Each also opens that window on screen, as it would for a player (not during an
+  event, and the game refuses some windows mid-fight). While a window is open every other Command
+  is refused until you `close` it, except `jump` from the map. `ftl state` shows the drive too.
+- `ftl help`: this list of views, Commands and IDs.
 
 You only see what a human player could see on screen. Anything else is left out or marked
 `hidden` with a reason.

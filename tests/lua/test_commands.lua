@@ -838,10 +838,18 @@ t.test("buy and upgrade need their window open; other actions need every window 
         "the upgrades window isn't open; run ftl upgrades first"
     )
     raw.window, raw.pause.menu = "map", true
-    t.eq(select(2, C.plan("jump beacon:1", raw)), "a game window is open; close it first")
+    t.eq(select(2, C.plan("buy item:0", raw)), "the store window isn't open; run ftl store first")
     t.eq(C.plan("close", raw), { kind = "close" })
     raw.window = "upgrades"
     t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0, cost = 20 })
+end)
+
+t.test("jump works from the open map window, as a player jumps", function()
+    local raw = raw_with_map()
+    raw.window, raw.pause.menu = "map", true
+    t.eq(C.plan("jump beacon:3", raw), { kind = "jump", beacon = 3 })
+    raw.window = "upgrades"
+    t.eq(select(2, C.plan("jump beacon:3", raw)), "a game window is open; close it first")
 end)
 
 t.test("buy and upgrade say so when the game refused to open their window", function()

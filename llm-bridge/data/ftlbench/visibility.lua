@@ -164,7 +164,7 @@ FtlBench = FtlBench or {}
 ---@field upgrades RawUpgrades?
 
 ---@class Observation
----@field views { state: table, map: table?, jumps: table?, store: table?, upgrades: table? }
+---@field views { state: table, map: table?, store: table?, upgrades: table? }
 ---@field events table[]
 
 local Visibility = {}
@@ -214,8 +214,10 @@ end
 local function paused_by(raw)
     local p, out = raw.pause, nil
     -- The game also sets its menu pause for an event window, so "menu" means any other window.
-    local menu = p.menu and not p.event
-    for _, reason in ipairs({ { p.manual, "player" }, { p.event, "event" }, { menu, "menu" } }) do
+    -- An event box can show with only the menu pause set (a store's greeting), so check for it too.
+    local event = p.event or raw.event ~= nil
+    local menu = p.menu and not event
+    for _, reason in ipairs({ { p.manual, "player" }, { event, "event" }, { menu, "menu" } }) do
         if reason[1] then
             out = out or setmetatable({}, LIST)
             out[#out + 1] = reason[2]
@@ -584,6 +586,13 @@ local function system_events(before, after, events)
         elseif was and was.ion > 0 and s.ion == 0 then
             events[#events + 1] =
                 { type = "system_ion_cleared", system = Visibility.system_id(s.type) }
+        end
+        if was and s.damage ~= was.damage then
+            events[#events + 1] = {
+                type = s.damage > was.damage and "system_damaged" or "system_repaired",
+                system = Visibility.system_id(s.type),
+                damage = s.damage,
+            }
         end
     end
 end
@@ -963,6 +972,21 @@ function Visibility.jump_blocker(raw)
     return nil
 end
 
+---The FTL drive as the HUD shows it: fuel, charge, and whether (or why not) it can jump now.
+---@param raw RawState
+local function drive_status(raw)
+    local ship = raw.player or {}
+    local blocker = Visibility.jump_blocker(raw)
+    local not_ready = blocker and blocker:match("^[^(]+"):gsub("%s+$", "")
+    return {
+        fuel = ship.fuel or 0,
+        ftl_charge = tenths(ship.ftl_charge or 0),
+        ftl_charge_time = tenths(ship.ftl_charge_time or 1),
+        ready = not_ready == nil,
+        not_ready = not_ready,
+    }
+end
+
 ---@param raw RawState
 ---@param map RawMap
 local function observe_map(raw, map)
@@ -982,6 +1006,7 @@ local function observe_map(raw, map)
             y = round(b.y),
             links = links,
             current = b.id == map.current or nil,
+            reachable = near[b.id] or nil, -- linked to the current beacon: a jump away now
             visited = b.visited or nil,
             exit = b.exit or nil,
             quest = b.quest or nil,
@@ -992,33 +1017,11 @@ local function observe_map(raw, map)
             jumps_until_fleet = until_fleet,
         }
     end
-    return { sector = raw.sector, beacons = beacons }
-end
-
----@param raw RawState
----@param map RawMap
-local function observe_jumps(raw, map)
-    local ship = raw.player or {}
-    local here = setmetatable({}, LIST)
-    for j, l in ipairs(Visibility.current_links(map)) do
-        here[j] = "beacon:" .. l
-    end
     local sectors = setmetatable({}, LIST)
     for i, s in ipairs(map.sector_choices or {}) do
         sectors[i] = { id = "sector:" .. s.index, type = SECTOR_TYPES[s.type + 1] }
     end
-    local fuel, charge, time = ship.fuel or 0, ship.ftl_charge or 0, ship.ftl_charge_time or 1
-    local blocker = Visibility.jump_blocker(raw)
-    local not_ready = blocker and blocker:match("^[^(]+"):gsub("%s+$", "")
-    return {
-        beacons = here,
-        sectors = sectors,
-        fuel = fuel,
-        ftl_charge = tenths(charge),
-        ftl_charge_time = tenths(time),
-        ready = not_ready == nil,
-        not_ready = not_ready,
-    }
+    return { sector = raw.sector, beacons = beacons, sectors = sectors, drive = drive_status(raw) }
 end
 
 ---Build the Observation and the new Visible events.
@@ -1050,6 +1053,9 @@ function Visibility.observe(prev, raw, hooks)
         },
         events = setmetatable(observe_events(prev, raw, hooks), LIST),
     }
+    if out.views.state.ship then
+        out.views.state.ship.ftl_drive = drive_status(raw) -- on the HUD, so no window needed
+    end
     -- A human can open the store only with no event window up and no hostile ship here.
     local store_usable = raw.store
         and not raw.pause.event
@@ -1059,7 +1065,6 @@ function Visibility.observe(prev, raw, hooks)
     out.views.upgrades = raw.upgrades and observe_upgrades(raw)
     if raw.map then
         out.views.map = observe_map(raw, raw.map)
-        out.views.jumps = observe_jumps(raw, raw.map)
     end
     if raw.game_over then
         local state = out.views.state
