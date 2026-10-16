@@ -33,6 +33,8 @@ def answer_events() -> None:
     """Answer open event windows with their first available choice; tests need the game running."""
     for _ in range(10):
         s = state()
+        if s.get("game_over"):
+            raise AssertionError(f"the Run ended (score {s.get('score')}); tests need a ship")
         if "menu" in (s.get("paused_by") or []):
             if ftl("close").returncode != 0:  # a store window closes; any other window can't
                 raise unittest.SkipTest("a game window other than a store is open")
@@ -334,10 +336,21 @@ class LiveEventsTest(unittest.TestCase):
         self.assertEqual(len(r.stdout.splitlines()), 1)
 
 
+def open_upgrades() -> dict[str, Any]:
+    """List the upgrades, which opens their window; an event box arriving first swallows that, so
+    answer it and try again."""
+    for _ in range(5):
+        upgrades = view("upgrades")
+        time.sleep(0.3)
+        if "menu" in (state().get("paused_by") or []):
+            return upgrades
+        answer_events()
+    raise AssertionError("the upgrades window would not open")
+
+
 def upgrade(target: str) -> subprocess.CompletedProcess[str]:
-    """Upgrade through the upgrades window (listing it opens it), then close it."""
-    ftl("upgrades")
-    time.sleep(0.3)
+    """Upgrade through the upgrades window, then close it."""
+    open_upgrades()
     r = act("upgrade", target)
     ftl("close")
     time.sleep(0.2)
@@ -635,8 +648,9 @@ def give_scrap(amount: int) -> None:
 
 
 def leave_any_fight() -> None:
-    """Jump away from a hostile ship (a store can't be used while one is here)."""
-    for _ in range(3):
+    """Jump away from hostile ships (a store or the upgrades window can't be used while one is
+    here); the next beacon may hold another fight, so keep going a few times."""
+    for _ in range(6):
         enemy = state().get("enemy")
         if not enemy or not enemy.get("hostile"):
             return
@@ -667,8 +681,7 @@ class LiveUpgradeTest(unittest.TestCase):
         leave_any_fight()  # the game won't open the upgrades window during some fights
         give_scrap(200)
         self.assertNotEqual(ftl("upgrade", "reactor").returncode, 0)  # window not open yet
-        upgrades = view("upgrades")
-        time.sleep(0.2)
+        upgrades = open_upgrades()
         target = next(s for s in upgrades["systems"] if not s.get("maxed"))
         scrap = state()["ship"]["scrap"]
         r = act("upgrade", target["id"])  # the listing above left the upgrades window open
@@ -802,6 +815,17 @@ class LiveAbilityTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         LiveGameTest.setUpClass()
+        # Upgrade first, at a quiet beacon: the game won't open the upgrades window in a fight,
+        # and the jump below often lands in one.
+        answer_events()
+        leave_any_fight()
+        enemy = state().get("enemy")
+        if enemy and enemy.get("hostile") and not enemy.get("destroyed"):
+            raise unittest.SkipTest("could not reach a beacon without a fight to upgrade at")
+        give_scrap(300)
+        for target in ("reactor",) * 4 + ("sensors",):  # spare bars; Sensors 2 sees the interior
+            r = upgrade(target)
+            assert r.returncode == 0, f"upgrade {target}: {r.stderr}"
         have = {s["name"] for s in state()["ship"]["systems"]}
         for type_id, name in (
             (10, "cloaking"),
@@ -814,20 +838,11 @@ class LiveAbilityTest(unittest.TestCase):
                 give_system(type_id)
         if "hacking" not in have:
             # The game registers a new hacking drone with space on the next jump (as after buying).
-            leave_any_fight()
             if not wait_until_jump_ready()["ready"]:
                 raise unittest.SkipTest("could not jump to register the hacking drone")
             act("jump", pick_jump())
             ftl("unpause")
             time.sleep(3)
-        # Upgrade before the fight: the game won't open the upgrades window during some fights.
-        answer_events()
-        leave_any_fight()
-        give_scrap(300)
-        for _ in range(4):  # spare reactor bars for the new systems
-            upgrade("reactor")
-        upgrade("sensors")  # Sensors 2 shows the enemy interior, for mind control
-        act("power", "sensors", "+1")
         if not find_enemy():
             raise unittest.SkipTest("no hostile enemy")
 
@@ -835,7 +850,12 @@ class LiveAbilityTest(unittest.TestCase):
         return state()["ship"]["abilities"].get(name, {})
 
     def test_cloak_and_battery_turn_on(self) -> None:
-        for command, name in (("cloak", "cloak"), ("battery", "battery")):
+        for command, name, sys_name in (
+            ("cloak", "cloak", "cloaking"),
+            ("battery", "battery", "battery"),
+        ):
+            if system(sys_name)["power"] < 1:
+                act("power", sys_name, "+1")
             r = act(command)
             self.assertEqual(r.returncode, 0, r.stderr)
             time.sleep(0.2)

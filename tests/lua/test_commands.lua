@@ -44,6 +44,12 @@ t.test("Commands need a Run in progress", function()
     t.eq(select(2, C.plan("pause", raw)), "no Run in progress")
 end)
 
+t.test("Commands are refused once the Run is over, even with the game-over screen up", function()
+    local raw = raw_in_run()
+    raw.game_over, raw.pause.menu = true, true
+    t.eq(select(2, C.plan("close", raw)), "the Run is over (see game_over in ftl state)")
+end)
+
 t.test("unpause is refused while an event is open", function()
     local raw = raw_in_run()
     raw.pause.event = true

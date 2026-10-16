@@ -707,6 +707,8 @@ function Commands.plan(text, raw)
     end
     if not raw.in_run then
         return nil, "no Run in progress"
+    elseif raw.game_over then
+        return nil, "the Run is over (see game_over in ftl state)" -- its screen holds the menu pause
     elseif FtlBench.Visibility.event_open(raw) and not EVENT_SAFE[name] then
         return nil, "an event is open; answer it first" -- the event window blocks the ship, as in the game
     elseif
