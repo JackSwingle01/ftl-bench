@@ -83,7 +83,7 @@ local function find_crew(raw, uid)
     return nil
 end
 
-local SHIELDS, WEAPONS, DRONES = 0, 3, 4
+local SHIELDS, WEAPONS, DRONES, DOORS = 0, 3, 4, 8
 
 ---@param raw RawState
 ---@return integer
@@ -588,6 +588,13 @@ local function plan_door(args, raw)
     local state = args[2]
     if #args ~= 2 or (state ~= "open" and state ~= "close") then
         return nil, "usage: door <door|all> open|close"
+    end
+    -- Not usable_system: ion takes away power bars, and doors with a bar left still work.
+    local sys = find_system(raw, DOORS)
+    if not sys then
+        return nil, "no system:doors on this ship"
+    elseif sys.power < 1 then
+        return nil, "system:doors is not powered"
     end
     local all_doors = raw.player.doors or {}
     local ids = {}

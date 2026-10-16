@@ -375,6 +375,8 @@ local function read_enemy(ship, player)
         scrap = int(ship.currentScrap),
         shield_layers = int(shields.first),
         shield_layers_max = int(shields.second),
+        zoltan = int(shields.super.first),
+        zoltan_max = int(shields.super.second),
         evasion = ship:GetDodgeFactor(),
         oxygen = ship:GetOxygenPercentage(),
         rooms = read_rooms(ship),
@@ -542,6 +544,7 @@ local function read_raw()
         p.systems = read_systems(ship)
         local shields = ship:GetShieldPower()
         p.shield_layers, p.shield_layers_max = int(shields.first), int(shields.second)
+        p.zoltan, p.zoltan_max = int(shields.super.first), int(shields.super.second)
         p.evasion, p.fuel = ship:GetDodgeFactor(), int(ship.fuel_count)
         p.missiles, p.drone_parts = int(ship:GetMissileCount()), int(ship:GetDroneCount())
         p.weapons, p.drones, weapon_objects, drone_objects = read_armaments(ship)
@@ -940,6 +943,10 @@ end)
 local function tick()
     local raw = read_raw()
     if raw.in_run then
+        -- FTL's autofire toggle only flags the weapons armed when it is pressed; keep later ones in step.
+        for _, w in ipairs(weapon_objects) do
+            w.autoFiring = raw.autofire
+        end
         frame = frame + 1
         if not Visibility.is_paused(raw) then
             game_time = game_time + Hyperspace.FPS.SpeedFactor / 16

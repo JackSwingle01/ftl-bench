@@ -68,6 +68,18 @@ local function raw_with_interior()
         { id = 1, room1 = 1, room2 = 2, open = false },
         { id = 2, room1 = 2, room2 = -1, open = false },
     }
+    raw.player.systems = {
+        {
+            type = 8,
+            room = 1,
+            power = 1,
+            level = 1,
+            cap = 1,
+            damage = 0,
+            ion = 0,
+            uses_reactor = false,
+        },
+    }
     local skills = { 1, 1, 1, 1, 1, 1 }
     raw.player.crew = {
         {
@@ -156,6 +168,17 @@ t.test("door rejects unknown doors and bad states", function()
     t.eq(select(2, C.plan("door door:7 open", raw)), "no door:7")
     t.eq(select(2, C.plan("door door:1 ajar", raw)), "usage: door <door|all> open|close")
     t.eq(select(2, C.plan("door 1 open", raw)), "expected a door ID like door:3 or all, got 1")
+end)
+
+t.test("door needs a working door system", function()
+    local raw = raw_with_interior()
+    local doors = raw.player.systems[1]
+    doors.power, doors.damage = 0, 1
+    t.eq(select(2, C.plan("door door:1 open", raw)), "system:doors is not powered")
+    t.eq(select(2, C.plan("door all close", raw)), "system:doors is not powered")
+    -- Ion only takes away power bars: doors that keep a bar of power still work.
+    doors.level, doors.cap, doors.power, doors.damage, doors.ion = 2, 2, 1, 0, 1
+    t.eq(C.plan("door door:1 open", raw), { kind = "door", doors = { 1 }, open = true })
 end)
 
 -- #4: power, weapon, drone. Reactor 5 of 8 used (3 free).

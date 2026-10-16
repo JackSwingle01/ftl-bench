@@ -81,6 +81,8 @@ FtlBench = FtlBench or {}
 ---@field systems RawSystem[]?
 ---@field shield_layers integer?
 ---@field shield_layers_max integer?
+---@field zoltan integer? Zoltan (super) shield HP left
+---@field zoltan_max integer?
 ---@field evasion number?         percent
 ---@field fuel integer?
 ---@field missiles integer?
@@ -386,6 +388,9 @@ local function observe_power(ship, view)
     view.reactor = ship.reactor and { used = ship.reactor.used, max = ship.reactor.max }
     if ship.shield_layers then
         view.shields = { layers = ship.shield_layers, max_layers = ship.shield_layers_max }
+        if (ship.zoltan_max or 0) > 0 then
+            view.shields.zoltan, view.shields.max_zoltan = ship.zoltan, ship.zoltan_max
+        end
     end
     view.evasion, view.fuel = ship.evasion and round(ship.evasion), ship.fuel
     view.missiles, view.drone_parts = ship.missiles, ship.drone_parts
@@ -785,7 +790,12 @@ function observe_enemy(raw, enemy)
         destroyed = enemy.destroyed or nil,
         hull = enemy.hull,
         hull_max = enemy.hull_max,
-        shields = { layers = enemy.shield_layers, max_layers = enemy.shield_layers_max },
+        shields = {
+            layers = enemy.shield_layers,
+            max_layers = enemy.shield_layers_max,
+            zoltan = (enemy.zoltan_max or 0) > 0 and enemy.zoltan or nil,
+            max_zoltan = (enemy.zoltan_max or 0) > 0 and enemy.zoltan_max or nil,
+        },
         sensors_level = level,
         rooms = setmetatable({}, LIST),
         doors = setmetatable({}, LIST),

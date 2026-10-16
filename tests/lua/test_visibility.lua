@@ -776,6 +776,16 @@ local function enemy_view(raw)
     return V.observe(nil, raw, {}).views.state.enemy
 end
 
+t.test("a Zoltan shield shows on either ship only when it has one", function()
+    local raw = raw_with_systems()
+    raw.player.zoltan, raw.player.zoltan_max = 3, 5
+    t.eq(ship_view(raw).shields, { layers = 1, max_layers = 1, zoltan = 3, max_zoltan = 5 })
+    raw = raw_with_enemy()
+    t.eq(enemy_view(raw).shields.zoltan, nil)
+    raw.enemy.zoltan, raw.enemy.zoltan_max = 0, 4 -- knocked down, but still fitted
+    t.eq(enemy_view(raw).shields, { layers = 1, max_layers = 1, zoltan = 0, max_zoltan = 4 })
+end)
+
 t.test("with no enemy ship there is no enemy view", function()
     t.eq(enemy_view(raw_with_systems()), nil)
 end)
