@@ -149,6 +149,7 @@ FtlBench = FtlBench or {}
 ---@field game_time number     unpaused game seconds since the Run started
 ---@field pause RawPause
 ---@field window string?    "map", "upgrades" or "store" while the Agent has that window open
+---@field refused_window string?  a window the game last refused to open for `show`
 ---@field nebula boolean?
 ---@field sector integer?     1-8, shown on the HUD
 ---@field game_over boolean?

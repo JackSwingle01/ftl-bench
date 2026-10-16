@@ -346,6 +346,9 @@ end
 -- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
 local shown_window = nil
 local open_window = nil -- raw.window as of the last read (also a store the game opened itself)
+local refused_window = nil -- the window the game last refused to open (e.g. intruders aboard)
+-- The game opens a window a frame or so after its key press; until then shown_window is unconfirmed.
+local shown_confirmed, shown_grace = false, 0
 
 -- Enemy crew objects by uid, for mind control (filled by read_enemy).
 local enemy_crew_objects = {}
@@ -502,8 +505,16 @@ local function read_raw()
     local gui = app and app.gui
     local ship = Hyperspace.ships.player
     local in_run = gui ~= nil and ship ~= nil and not app.menu.bOpen
-    if shown_window and not (gui and gui.menu_pause) then
-        shown_window = nil -- closed by the watcher
+    if shown_window then
+        if gui and gui.menu_pause then
+            shown_confirmed = true
+        elseif shown_confirmed then
+            shown_window = nil -- closed by the watcher
+        elseif shown_grace > 0 then
+            shown_grace = shown_grace - 1
+        else
+            refused_window, shown_window = shown_window, nil -- the game never opened it
+        end
     end
     ---@type RawState
     local raw = {
@@ -559,6 +570,7 @@ local function read_raw()
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
         raw.window = shown_window or (raw.store and raw.store.open and "store") or nil
+        raw.refused_window = refused_window
         open_window = raw.window
         raw.upgrades = read_upgrades(ship)
     end
@@ -722,7 +734,8 @@ local function execute(cmd)
                 return "no store hotkey is bound; close FTL and run scripts/install-mod"
             end
             press(keys[cmd.window])
-            shown_window = cmd.window
+            shown_window, refused_window = cmd.window, nil
+            shown_confirmed, shown_grace = false, 5
         end
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.

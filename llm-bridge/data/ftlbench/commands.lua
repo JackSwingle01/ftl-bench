@@ -49,6 +49,21 @@ local function event_open(raw)
     return raw.pause.event or raw.event ~= nil
 end
 
+---Why `buy` or `upgrade` can't use its window, or nil when it is open.
+---@param raw RawState
+---@param window string "store" or "upgrades"
+---@return string?
+local function window_needed(raw, window)
+    if raw.window == window then
+        return nil
+    elseif raw.refused_window == window then
+        return ("the game would not open the %s window just now (it refuses during some fights, "):format(
+            window
+        ) .. "e.g. with intruders aboard)"
+    end
+    return ("the %s window isn't open; run ftl %s first"):format(window, window)
+end
+
 local WAIT_ERROR = "wait takes 0.1 to 10 seconds in steps of 0.1"
 
 ---Parse an ID like "room:4" or "enemy:room:4".
@@ -453,8 +468,8 @@ local function plan_buy(args, raw)
         return nil, "usage: buy <item>"
     elseif not raw.store then
         return nil, "there is no store here"
-    elseif raw.window ~= "store" then
-        return nil, "the store window isn't open; run ftl store first"
+    elseif window_needed(raw, "store") then
+        return nil, window_needed(raw, "store")
     end
     local it = raw.store.items[n + 1]
     if not it then
@@ -480,8 +495,8 @@ local function plan_upgrade(args, raw)
         return nil, "usage: upgrade <system|reactor>"
     elseif not raw.upgrades then
         return nil, "upgrades are not available right now"
-    elseif raw.window ~= "upgrades" then
-        return nil, "the upgrades window isn't open; run ftl upgrades first"
+    elseif window_needed(raw, "upgrades") then
+        return nil, window_needed(raw, "upgrades")
     end
     local scrap = raw.player.scrap
     if args[1] == "reactor" then

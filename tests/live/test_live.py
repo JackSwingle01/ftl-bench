@@ -885,9 +885,9 @@ def load_tests(
         LiveEventsTest,
         LiveNavigationTest,
         LiveEventChoiceTest,
+        LiveUpgradeTest,  # before the fights: the game won't open its windows with intruders aboard
         LiveEnemyTest,
         LiveCombatTest,
-        LiveUpgradeTest,
         LiveStoreTest,
         LiveAbilityTest,
         LiveGameOverTest,
