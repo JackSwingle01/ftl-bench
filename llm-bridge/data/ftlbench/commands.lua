@@ -40,6 +40,8 @@ local WINDOW_SAFE = {
     unpause = true,
     show = true,
 }
+-- More Commands that work from inside one particular window, as a player uses it.
+local ALLOWED_IN = { map = { jump = true } }
 
 ---Why `buy` or `upgrade` can't use its window, or nil when it is open.
 ---@param raw RawState
@@ -711,7 +713,7 @@ function Commands.plan(text, raw)
         raw.pause.menu
         and not FtlBench.Visibility.event_open(raw)
         and not WINDOW_SAFE[name]
-        and not (name == "jump" and raw.window == "map") -- players jump from the map
+        and not (ALLOWED_IN[raw.window] or {})[name]
     then
         return nil, "a game window is open; close it first" -- hotkeys go to the window, not the ship
     end

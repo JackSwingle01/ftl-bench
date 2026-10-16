@@ -104,7 +104,11 @@ def main(args: list[str]) -> None:
         return
     if args == ["help"]:  # the task prompt's views, Commands and IDs, so they never drift apart
         task = (PROMPTS / "task.md").read_text()
-        start, end = task.index("## Reading the game"), task.index("## Rules for you")
+        start, end = task.find("## Reading the game"), task.find("## Rules for you")
+        if start < 0 or end < start:
+            fail(
+                "ftl help: task.md is missing its 'Reading the game' or 'Rules for you' heading", 2
+            )
         sys.stdout.write(task[start:end])
         return
     require_game()
