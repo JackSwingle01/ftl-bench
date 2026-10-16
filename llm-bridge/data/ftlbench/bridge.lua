@@ -342,7 +342,8 @@ end
 local pending_moves = {}
 
 local SHOW_GRACE_FRAMES = 5
-local pending_window, pending_frames, refused_window = nil, 0, nil
+-- The window a `show` pressed for until it opens (pending), and the last one the game refused.
+local shown = { pending = nil, frames = 0, refused = nil }
 
 ---The game window open over the ship view, read from the windows themselves (an event box sets
 ---the same menu pause, so that pause alone can't tell them apart).
@@ -573,15 +574,15 @@ local function read_raw()
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
         raw.window = game_window()
-        if pending_window and raw.window == pending_window then
-            pending_window = nil
-        elseif pending_window and pending_frames > 0 then
-            pending_frames = pending_frames - 1
-            raw.window = raw.window or pending_window -- opening; Commands treat it as open
-        elseif pending_window then
-            refused_window, pending_window = pending_window, nil -- the game never opened it
+        if shown.pending and raw.window == shown.pending then
+            shown.pending = nil
+        elseif shown.pending and shown.frames > 0 then
+            shown.frames = shown.frames - 1
+            raw.window = raw.window or shown.pending -- opening; Commands treat it as open
+        elseif shown.pending then
+            shown.refused, shown.pending = shown.pending, nil -- the game never opened it
         end
-        raw.refused_window = refused_window
+        raw.refused_window = shown.refused
         raw.upgrades = read_upgrades(ship)
     end
     return raw
@@ -697,7 +698,7 @@ local function execute(cmd)
         -- Escape closes the window the way a player does, clearing the game's window pause too
         -- (Store:Close() alone left it set). Commands only allows this while a window is open.
         press(KEY_ESCAPE)
-        pending_window = nil
+        shown.pending = nil
     elseif cmd.kind == "cloak" or cmd.kind == "battery" then
         local ship = Hyperspace.ships.player
         local sys = cmd.kind == "cloak" and ship.cloakSystem or ship.batterySystem
@@ -743,7 +744,7 @@ local function execute(cmd)
                 return "no store hotkey is bound; close FTL and run scripts/install-mod"
             end
             press(keys[cmd.window])
-            pending_window, pending_frames, refused_window = cmd.window, SHOW_GRACE_FRAMES, nil
+            shown.pending, shown.frames, shown.refused = cmd.window, SHOW_GRACE_FRAMES, nil
         end
     elseif cmd.kind == "autofire" then
         -- autoFiring is read-only to Lua; press FTL's autofire hotkey when it needs to change.
@@ -823,8 +824,8 @@ local function handle_inbox(raw)
                 pending_moves[cmd.crew] =
                     { room = cmd.room, enemy = cmd.enemy, at = raw.game_time, command = text }
             end
-            if cmd and cmd.kind == "show" and not err and pending_window then
-                raw.window, raw.pause.menu = pending_window, true -- later lines this tick see it
+            if cmd and cmd.kind == "show" and not err and shown.pending then
+                raw.window, raw.pause.menu = shown.pending, true -- later lines this tick see it
             end
             local status = err and ("error\t" .. err)
                 or (cmd and cmd.seconds and ("ok\t" .. cmd.seconds))
