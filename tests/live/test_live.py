@@ -364,10 +364,10 @@ class LiveNavigationTest(unittest.TestCase):
 
     def test_jump_to_a_linked_beacon_uses_one_fuel(self) -> None:
         answer_events()
-        jumps = drive()
-        if not jumps["ready"]:
-            self.skipTest(f"can't jump here: {jumps.get('not_ready')}")
-        target, fuel = pick_jump(), jumps["fuel"]
+        ftl_drive = drive()
+        if not ftl_drive["ready"]:
+            self.skipTest(f"can't jump here: {ftl_drive.get('not_ready')}")
+        target, fuel = pick_jump(), ftl_drive["fuel"]
         r = ftl("jump", target)
         self.assertEqual(r.returncode, 0, r.stderr)
         answer_events_and_unpause(self)
@@ -404,9 +404,9 @@ class LiveEventChoiceTest(unittest.TestCase):
 
     def test_an_event_shows_choices_and_choose_answers_it(self) -> None:
         answer_events()
-        jumps = drive()
-        if not jumps["ready"]:
-            self.skipTest(f"can't jump to reach an event: {jumps.get('not_ready')}")
+        ftl_drive = drive()
+        if not ftl_drive["ready"]:
+            self.skipTest(f"can't jump to reach an event: {ftl_drive.get('not_ready')}")
         self.assertEqual(ftl("jump", pick_jump()).returncode, 0)
         ftl("unpause")
         event = None
@@ -469,15 +469,18 @@ def fight_back() -> None:
 def wait_until_jump_ready(limit: float = 90) -> dict[str, Any]:
     """Let the game run (answering events, fighting back) until the FTL drive is ready; returns
     the drive status."""
-    jumps = drive()
+    ftl_drive = drive()
     deadline = time.monotonic() + limit
-    while not jumps["ready"] and time.monotonic() < deadline:
+    while not ftl_drive["ready"] and time.monotonic() < deadline:
         answer_events()
+        if "Piloting" in (ftl_drive.get("not_ready") or ""):  # earlier tests moved the pilot away
+            aboard = [c for c in state()["ship"]["crew"] if not c["room"].startswith("enemy:")]
+            walk(aboard[0]["id"], system("piloting")["room"])
         fight_back()
         ftl("unpause")
         time.sleep(1)
-        jumps = drive()
-    return jumps
+        ftl_drive = drive()
+    return ftl_drive
 
 
 def find_enemy() -> dict[str, Any] | None:
@@ -630,8 +633,8 @@ def leave_any_fight() -> None:
         enemy = state().get("enemy")
         if not enemy or not enemy.get("hostile"):
             return
-        jumps = wait_until_jump_ready()
-        if jumps["ready"]:
+        ftl_drive = wait_until_jump_ready()
+        if ftl_drive["ready"]:
             act("jump", pick_jump())
             ftl("unpause")
             time.sleep(3)
@@ -684,8 +687,8 @@ def find_store() -> dict[str, Any] | None:
         r = ftl("store")
         if r.returncode == 0:
             return json.loads(r.stdout)
-        jumps = wait_until_jump_ready()
-        if not jumps["ready"]:
+        ftl_drive = wait_until_jump_ready()
+        if not ftl_drive["ready"]:
             return None
         if ftl("jump", pick_jump(prefer="store")).returncode != 0:
             return None

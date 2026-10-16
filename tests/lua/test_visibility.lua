@@ -585,6 +585,14 @@ t.test("the drive says why it can't jump, on the map and in the state", function
     })
 end)
 
+t.test("the drive can't charge with nobody in a level-1 Piloting room", function()
+    local raw = raw_with_map()
+    raw.player.ftl_charge = 0
+    raw.player.crew[1].room = 1 -- Maria leaves the piloting room (room 0)
+    local d = map_view(raw).drive
+    t.eq({ d.ready, d.not_ready }, { false, "Piloting is unmanned" })
+end)
+
 t.test("at the exit, the map offers the next sectors by type only", function()
     local raw = raw_with_map()
     raw.map.current = 2
@@ -599,6 +607,10 @@ t.test("the drive is not ready while an event is open", function()
     local raw = raw_with_map()
     raw.pause.event = true
     local d = map_view(raw).drive
+    t.eq({ d.ready, d.not_ready }, { false, "an event is open" })
+    raw = raw_with_map()
+    raw.event = { text = "Greetings", choices = {}, received = {} } -- a box without the event pause
+    d = map_view(raw).drive
     t.eq({ d.ready, d.not_ready }, { false, "an event is open" })
 end)
 

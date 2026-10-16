@@ -346,6 +346,7 @@ end
 -- The window the Agent opened by reading a view (`ftl map|upgrades|store`); stays until `close`.
 -- The game opens a window a frame or so after its key press, so a `show` waits a few frames
 -- (pending) before counting the window as refused (the game won't open some mid-fight).
+local SHOW_GRACE_FRAMES = 5
 local pending_window, pending_frames, refused_window = nil, 0, nil
 local pressed_window = nil -- the window our last `show` key press was for
 
@@ -356,7 +357,9 @@ local function game_window()
     local app = Hyperspace.App
     local loc = app.world.starMap.currentLoc
     local store = loc and loc.event and loc.event.pStore
-    if app.world.starMap.bOpen then
+    if not app.gui.menu_pause then
+        return nil -- a window's open flag can linger a moment after it closes
+    elseif app.world.starMap.bOpen then
         return "map"
     elseif store and store.bOpen then
         return "store"
@@ -750,7 +753,7 @@ local function execute(cmd)
                 return "no store hotkey is bound; close FTL and run scripts/install-mod"
             end
             press(keys[cmd.window])
-            pending_window, pending_frames, refused_window = cmd.window, 5, nil
+            pending_window, pending_frames, refused_window = cmd.window, SHOW_GRACE_FRAMES, nil
             pressed_window = cmd.window
         end
     elseif cmd.kind == "autofire" then

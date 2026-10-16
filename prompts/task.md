@@ -25,8 +25,9 @@ An open event window keeps the game paused until you answer it.
   the game is paused, the game time and the sector. Use `jq` or any tool you like to filter it.
 - `ftl events`: everything that happened since you last ran `ftl events`, one JSON object per line.
 - `ftl events history N`: the last N events, whether or not you have read them.
-- `ftl map`, `ftl store`, `ftl upgrades`: the sector map (beacons you can jump to now are marked
-  `reachable`, and `drive` says whether the FTL drive is ready), the store's stock, and the
+- `ftl map`, `ftl store`, `ftl upgrades`: the sector map (beacons linked to yours are marked
+  `reachable`, `drive` says whether the FTL drive is ready, and at the exit `sectors` lists the
+  next sectors), the store's stock, and the
   upgrades on offer. Each also opens that window on screen, as it would for a player (not during an
   event, and the game refuses some windows mid-fight). While a window is open every other Command
   is refused until you `close` it, except `jump` from the map. `ftl state` shows the drive too.
@@ -47,7 +48,7 @@ reason and exits non-zero when it does not, so `&&` chains stop at the first fai
 - Crew and doors: `move <crew> <room>`, `door <door|all> open|close`
 - Abilities: `cloak`, `battery`, `hack <enemy:room>`, `mindcontrol <enemy:crew>`,
   `teleport send|return <room>`
-- Travel and events: `jump <beacon>`, `choose <choice>`
+- Travel and events: `jump <beacon>`, `jump <sector>` (from the exit beacon), `choose <choice>`
 - Store and ship: `buy <item>`, `upgrade <system|reactor>`, `close` (shut the open map, upgrades or store window).
   `buy` needs `ftl store` first and `upgrade` needs `ftl upgrades` first
 
@@ -56,7 +57,7 @@ Run each as `ftl <command>`, e.g. `ftl power shields +2 && ftl weapon weapon:1 o
 ## IDs
 
 Everything you can refer to has an ID of the form `type:index`, e.g. `room:4`, `door:7`,
-`weapon:0`, `crew:101`, `system:shields`, `beacon:12`, `choice:2`. Things on the enemy ship start
+`weapon:0`, `crew:101`, `system:shields`, `beacon:12`, `sector:5`, `choice:2`. Things on the enemy ship start
 with `enemy:`, e.g. `enemy:room:3`. In `ftl state` every object has its `id` next to its `name`;
 events and error messages write IDs as `room:4 (engines)`.
 

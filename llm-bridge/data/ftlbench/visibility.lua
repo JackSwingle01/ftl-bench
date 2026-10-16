@@ -214,8 +214,7 @@ end
 local function paused_by(raw)
     local p, out = raw.pause, nil
     -- The game also sets its menu pause for an event window, so "menu" means any other window.
-    -- An event box can show with only the menu pause set (a store's greeting), so check for it too.
-    local event = p.event or raw.event ~= nil
+    local event = Visibility.event_open(raw)
     local menu = p.menu and not event
     for _, reason in ipairs({ { p.manual, "player" }, { event, "event" }, { menu, "menu" } }) do
         if reason[1] then
@@ -954,16 +953,34 @@ local function adjacent_to_current(map)
     return near
 end
 
+---Whether an event box is up. It can show with only the menu pause set (seen live: a store's
+---greeting box), so the box itself counts too. It blocks the ship, as in the game.
+---@param raw RawState
+---@return boolean
+function Visibility.event_open(raw)
+    return raw.pause.event or raw.event ~= nil
+end
+
 ---Why the ship can't jump right now, or nil when it can. Commands give the same reasons.
 ---@param raw RawState
 ---@return string?
 function Visibility.jump_blocker(raw)
     local ship = raw.player or {}
-    if raw.pause.event then
+    if Visibility.event_open(raw) then
         return "an event is open"
     elseif (ship.fuel or 0) < 1 then
         return "no fuel"
     elseif (ship.ftl_charge or 0) < (ship.ftl_charge_time or 1) then
+        local piloting = index_by(ship.systems, "type")[6]
+        if piloting and piloting.level == 1 then
+            local manned = false
+            for _, c in ipairs(ship.crew or {}) do
+                manned = manned or (c.room == piloting.room and not c.on_enemy_ship)
+            end
+            if not manned then
+                return "Piloting is unmanned (the FTL drive charges only with a pilot)"
+            end
+        end
         return ("FTL drive charging (%.1f of %.1f)"):format(
             tenths(ship.ftl_charge or 0),
             tenths(ship.ftl_charge_time or 1)

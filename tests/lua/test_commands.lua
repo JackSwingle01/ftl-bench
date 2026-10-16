@@ -388,6 +388,7 @@ end)
 local function raw_with_map()
     local raw = raw_with_systems()
     raw.player.fuel, raw.player.ftl_charge, raw.player.ftl_charge_time = 4, 1, 1
+    raw.player.crew[1].room = 1 -- at the helm (Piloting is room 1)
     raw.map = {
         current = 0,
         beacons = {
@@ -653,7 +654,7 @@ end)
 t.test("close shuts an open window", function()
     t.eq(C.plan("close", raw_at_store()), { kind = "close" })
     local raw = raw_at_store()
-    raw.window = nil
+    raw.window, raw.pause.menu = nil, false
     t.eq(select(2, C.plan("close", raw)), "no window is open")
 end)
 
@@ -842,6 +843,14 @@ t.test("buy and upgrade need their window open; other actions need every window 
     t.eq(C.plan("close", raw), { kind = "close" })
     raw.window = "upgrades"
     t.eq(C.plan("upgrade shields", raw), { kind = "upgrade", system = 0, cost = 20 })
+end)
+
+t.test("close also shuts a game window we didn't open, such as its pause menu", function()
+    local raw = raw_with_systems()
+    raw.window, raw.pause.menu = nil, true
+    t.eq(C.plan("close", raw), { kind = "close" })
+    raw.pause.menu = false
+    t.eq(select(2, C.plan("close", raw)), "no window is open")
 end)
 
 t.test("jump works from the open map window, as a player jumps", function()
