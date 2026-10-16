@@ -820,9 +820,14 @@ class LiveAbilityTest(unittest.TestCase):
             act("jump", pick_jump())
             ftl("unpause")
             time.sleep(3)
-        give_scrap(200)
+        # Upgrade before the fight: the game won't open the upgrades window during some fights.
+        answer_events()
+        leave_any_fight()
+        give_scrap(300)
         for _ in range(4):  # spare reactor bars for the new systems
             upgrade("reactor")
+        upgrade("sensors")  # Sensors 2 shows the enemy interior, for mind control
+        act("power", "sensors", "+1")
         if not find_enemy():
             raise unittest.SkipTest("no hostile enemy")
 
@@ -857,11 +862,6 @@ class LiveAbilityTest(unittest.TestCase):
         enemy = find_enemy()
         if not enemy:
             self.skipTest("no hostile enemy")
-        if not enemy.get("crew"):  # Sensors level 2 shows the enemy's interior
-            give_scrap(100)
-            upgrade("sensors")
-            act("power", "sensors", "+1")
-            enemy = find_enemy() or {}
         if not enemy.get("crew"):
             self.skipTest("no enemy crew visible")
         r = act("mindcontrol", enemy["crew"][0]["id"])
