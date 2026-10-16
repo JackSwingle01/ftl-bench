@@ -175,6 +175,17 @@ class CliTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         return [json.loads(line) for line in r.stdout.splitlines()]
 
+    def test_events_start_with_the_warnings_that_are_up(self) -> None:
+        state: dict[str, object] = {"in_run": True, "paused": False, "warnings": ["HULL CRITICAL"]}
+        self.start_game(state=state)
+        assert self.game
+        run = self.game.start_run()
+        self.game.add_events(run, {"type": "a"})
+        warning = {"type": "warnings", "active": ["HULL CRITICAL"]}
+        self.assertEqual(self.events_out(), [warning, {"type": "a"}])
+        self.assertEqual(self.events_out(), [warning])  # every call while they are up
+        self.assertEqual(self.events_out("history", "1"), [{"type": "a"}])  # history is the log
+
     def test_events_returns_each_event_exactly_once(self) -> None:
         self.start_game()
         assert self.game
@@ -245,6 +256,21 @@ class CliTest(unittest.TestCase):
         for usage in ("ftl state", "ftl map", "power <system>", "jump <beacon>", "choose <choice>"):
             self.assertIn(usage, r.stdout)
         self.assertNotIn("ftl jumps", r.stdout)
+
+    def test_help_with_an_id_prints_the_games_own_text_for_it(self) -> None:
+        self.start_game()
+        assert self.game
+        help_texts = {"system:engines": "Engines: Charges the FTL drive.", "weapon:0": "Artemis"}
+        (self.game.live / "help.json").write_text(json.dumps(help_texts))
+        (self.game.live / "store.json").write_text(
+            json.dumps({"items": [{"id": "item:0", "description": "Fires 2 shots."}]})
+        )
+        r = self.ftl("help", "system:engines")
+        self.assertEqual((r.returncode, r.stdout), (0, "Engines: Charges the FTL drive.\n"))
+        self.assertEqual(self.ftl("help", "item:0").stdout, "Fires 2 shots.\n")  # store stock too
+        r = self.ftl("help", "drone:3")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no drone:3", r.stderr)
 
     def test_primer_and_task_prompt_give_no_strategy_advice(self) -> None:
         prompts = FTL.parents[1] / "prompts"

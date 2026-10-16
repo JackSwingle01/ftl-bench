@@ -6,6 +6,7 @@ as text to the mod (the only Command parser), which answers within a frame.
 Exit codes: 0 ok, 1 Command rejected, 2 game not running or not responding.
 """
 
+import json
 import os
 import sys
 import time
@@ -25,7 +26,7 @@ VIEWS = ("state", "map", "store", "upgrades")
 WINDOW_VIEWS = ("map", "store", "upgrades")  # reading these opens the game window too
 STALE_AFTER = 10.0  # seconds without a state update before the game counts as not running
 ANSWER_TIMEOUT = 3.0  # seconds to wait for the mod to answer a Command
-USAGE = "usage: ftl help|rules|state|map | ftl events [history N] | ftl <command> [args...]"
+USAGE = "usage: ftl help [id]|rules|state|map | ftl events [history N] | ftl <command> [args...]"
 
 
 def fail(message: str, code: int) -> NoReturn:
@@ -88,12 +89,29 @@ def events(args: list[str]) -> None:
         tmp = cursor.with_suffix(".tmp")
         tmp.write_text(str(len(lines)))
         tmp.replace(cursor)  # atomic, so a crash never leaves a half-written read position
+        warnings = json.loads((LIVE / "state.json").read_text()).get("warnings")
+        if warnings:  # the game's banners that are up now, first on every read
+            print(json.dumps({"type": "warnings", "active": warnings}))
     elif len(args) == 2 and args[0] == "history" and args[1].isdigit():
         shown = lines[-int(args[1]) :] if int(args[1]) else []
     else:
         fail("usage: ftl events [history N]", 1)
     for line in shown:
         print(line)
+
+
+def help_for(item: str) -> None:
+    """The game's own hover text for one thing: a system, weapon, drone, augment, cargo item or crew
+    member of ours (help.json), or an item in the open store's stock."""
+    texts: dict[str, str] = {}
+    if (LIVE / "help.json").exists():
+        texts = json.loads((LIVE / "help.json").read_text())
+    if (LIVE / "store.json").exists():
+        for it in json.loads((LIVE / "store.json").read_text()).get("items", []):
+            texts[it["id"]] = it.get("description", "")
+    if item not in texts:
+        fail(f"no {item} to describe; IDs come from ftl state and ftl store", 1)
+    print(texts[item])
 
 
 def main(args: list[str]) -> None:
@@ -112,6 +130,9 @@ def main(args: list[str]) -> None:
         sys.stdout.write(task[start:end])
         return
     require_game()
+    if len(args) == 2 and args[0] == "help":
+        help_for(args[1])
+        return
     if len(args) == 1 and args[0] in VIEWS:
         view = LIVE / f"{args[0]}.json"
         if not view.exists():

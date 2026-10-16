@@ -43,22 +43,15 @@ winning. `ftl map` shows for each beacon how many jumps remain before the fleet 
   `ftl power <system> +N|-N` moves bars. A system works at the level of the power it has.
 - Subsystems (Piloting, Sensors, Doors, Battery) use no reactor power; their level is what they
   provide.
-- Shields: every 2 power makes one shield layer. Each layer stops one incoming projectile or
-  reduces a beam, then recharges over a few seconds. Shield power moves 2 at a time.
-- Engines: raise evasion and charge the FTL drive.
-- Oxygen: refills air in every room. Without it, air drains and crew suffocate. Crew in a room with
-  5% O2 or less take 6.4 damage per second (Crystal half, Lanius immune). A room drains from fires,
-  breaches, open airlocks, open doors to thinner rooms, or unpowered Oxygen.
-- Weapons and Drones: hold weapons and drones; each one needs its own power to run.
-- Medbay: the only way to heal crew. Damaged crew do not recover on their own; they must stand in
-  the powered Medbay room. Upgrades heal faster.
-- Piloting: needed to dodge and to jump. Unmanned, the ship cannot dodge unless Piloting has been
-  upgraded, which adds an autopilot with reduced evasion.
-- Sensors: show your own ship's interior; higher levels show more of the enemy ship.
-- Doors: control door strength against boarders.
-- Optional systems that can be bought or found later: Teleporter (send crew to the enemy ship),
-  Cloaking (become briefly untargetable), Hacking, Mind Control, Battery (temporary extra power),
-  Clone Bay (revives dead crew).
+- What each system does, what its current level gives, its manning bonus and its status:
+  `ftl help system:<name>`, the text the game shows when you hover the system. `ftl upgrades` lists
+  what every level gives. Shield power moves 2 at a time: each layer takes 2 bars.
+- Oxygen refills air in every room. Crew in a room with 5% O2 or less take 6.4 damage per second
+  (Crystal half, Lanius immune). A room drains from fires, breaches, open airlocks, open doors to
+  thinner rooms, or unpowered Oxygen.
+- Damaged crew recover only in the powered Medbay room (or a Clone Bay revives the dead).
+- Optional systems can be bought or found later: Teleporter, Cloaking, Hacking, Mind Control,
+  Battery, Clone Bay, Drone Control.
 - Every ship starts with Piloting, Engines, Oxygen and Weapons; most also start with Shields,
   Medbay, Doors and Sensors. `ftl state` lists the systems your ship has.
 - Damage to a room damages the system in it and lowers its usable power until repaired.
@@ -86,40 +79,9 @@ winning. `ftl map` shows for each beacon how many jumps remain before the fleet 
 
 ### Weapon stats
 
-Power bars / charge seconds / shots per volley x damage per shot / chance %. Damage is hull and
-system damage per shot. Fire and breach chances are per hit; a hit cannot cause both.
-
-Lasers (hit shields, then room):
-- Basic Laser 1p/10s 1x1 fire10; Dual Lasers 1p/10s 2x1 fire10
-- Burst Laser I 2p/11s 2x1 fire10; II 2p/12s 3x1 fire10; III 4p/19s 5x1
-- Heavy Laser I 1p/9s 1x2 fire30 breach21; II 3p/13s 2x2 fire30 breach21
-- Heavy Pierce I 2p/10s 1x2 fire30 breach21, pierces shields
-- Hull Laser I 2p/14s 2x1 breach20; II 3p/15s 3x1 fire10 breach27 (hull damage doubled)
-- Chain Laser 2p/16s 2x1 fire10; Chain Vulcan 4p/11s 1x1 fire10 (both charge faster as they fire)
-- Laser Charger (S) 1p/5.5s, Charger 2p/6s: 1-2 shots x1; Charger II 3p/5s 1-4 shots x1 fire10
-Flak (area, hit shields then room):
-- Adv. Flak 1p/8s 3x1; Flak I 2p/10s 3x1; Flak II 3p/21s 7x1
-Ion (shield layers and system power, no hull damage; ion damage is shield layers removed or
-power bars locked):
-- Ion Blast 1p/8s ion1 stun10; Ion Blast II 3p/4s ion1 stun10; Heavy Ion 2p/13s ion2 stun20
-- Ion Stunner 1p/10s ion1 stuns crew 100%; Ion Charger 2p/6s 1-3 shots ion1; Chain Ion 3p/14s ion1-4
-Crystal (pierce one shield layer):
-- Crystal Burst I 2p/15s 2x1 breach10 stun10; II 3p/17s 3x1 breach10 stun10
-- Heavy Crystal I 1p/13s 1x2 breach10 stun20; II 3p/19s 1x4 breach100 stun20
-Missiles (ignore shields, 1 missile per shot):
-- Leto 1p/9s 1x1 fire10 breach9; Artemis 1p/11s 1x2 fire10 breach9
-- Hermes 3p/14s 1x3 fire30 breach14; Pegasus 3p/20s 2x2 fire30 breach14
-- Breach Missiles 3p/22s 1x4 fire30 breach56; Hull Missile 2p/17s 1x2 breach27 (hull damage doubled)
-- Swarm Missiles 2p/7s 1-3 shots x1 fire10 breach9
-Bombs (teleport into room, no hull damage, 1 missile per shot; damage is to systems):
-- Small Bomb 1p/13s sys2 fire10; Breach Bomb I 1p/9s sys1 breach100; II 2p/17s sys3 breach100
-- Fire Bomb 2p/15s fire100; Ion Bomb 1p/22s ion, stun20; Stun Bomb 1p/17s stuns crew
-- Lock Bomb 1p/15s locks doors; Healing Burst 1p/18s heals crew in room; Repair Burst 1p/14s repairs
-  systems in room (the last two can target your own ship)
-Beams (never miss, damage drops 1 per shield layer; damage is hull and system damage per room hit):
-- Mini Beam 1p/12s dmg1 fire10 short; Pike Beam 2p/16s dmg1 long; Hull Beam 2p/14s dmg1 (hull x2)
-- Halberd Beam 3p/17s dmg2; Glaive Beam 4p/25s dmg3
-- Fire Beam 2p/20s no damage, fire80; Anti-Bio Beam 2p/16s no system damage, 60 crew damage per tile
+Every weapon's and drone's stats, as the game shows them on hover: `ftl help weapon:<n>` and
+`ftl help drone:<n>` for yours, `ftl help item:<n>` for a store's stock, `ftl help cargo:<n>` for
+the cargo hold.
 
 ## Crew
 

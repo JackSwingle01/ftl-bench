@@ -1201,6 +1201,52 @@ t.test("a hit outside any room names no room", function()
     })
 end)
 
+t.test("state lists our augments and the cargo hold, each with an ID for ftl help", function()
+    local raw = raw_with_systems()
+    raw.player.augments = { "Scrap Recovery Arm" }
+    raw.player.cargo = { "Basic Laser", "Defense Drone I" }
+    local ship = V.observe(nil, raw, {}).views.state.ship
+    t.eq({ ship.augments, ship.cargo }, {
+        { { id = "augment:0", name = "Scrap Recovery Arm" } },
+        { { id = "cargo:0", name = "Basic Laser" }, { id = "cargo:1", name = "Defense Drone I" } },
+    })
+end)
+
+-- #26: the game's WARNING banners, in its own words (text_misc.xml warning_*).
+t.test("warnings list the game's banners that are up, in the game's text", function()
+    local raw = raw_with_systems()
+    raw.texts = { warning_hull_50 = "HULL AT 50%", warning_shields = "SHIELDS CRITICAL" }
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, nil) -- all well: no banner
+    raw.player.hull, raw.player.hull_max = 14, 30 -- 47%: the 50% banner, not the 75% one
+    raw.player.systems[1].damage = 1 -- Shields 2 with 1 damage: 1 health left
+    t.eq(V.observe(nil, raw, {}).views.state.warnings, { "HULL AT 50%", "SHIELDS CRITICAL" })
+end)
+
+t.test("each warning has its own condition", function()
+    local raw = raw_with_systems()
+    raw.texts = {}
+    local function warnings()
+        return V.observe(nil, raw, {}).views.state.warnings
+    end
+    raw.player.hull, raw.player.hull_max = 7, 30
+    t.eq(warnings(), { "warning_hull_25" }) -- a missing text falls back to its name
+    raw.player.hull = 30
+    raw.player.oxygen = 24
+    t.eq(warnings(), { "warning_oxygen" })
+    raw.player.oxygen = 100
+    raw.player.systems[#raw.player.systems + 1] = {
+        type = 1,
+        room = 3,
+        power = 0,
+        level = 2,
+        cap = 0,
+        damage = 2,
+        ion = 0,
+        uses_reactor = true,
+    }
+    t.eq(warnings(), { "warning_engine" })
+end)
+
 -- #12: store and upgrades.
 ---@return RawState
 local function raw_at_store()
@@ -1252,6 +1298,31 @@ t.test("upgrades list the reactor and each system's next cost", function()
         { id = "system:shields", level = 2, max_level = 8, cost = 20, affordable = true }
     )
     t.eq(u.systems[2], { id = "system:weapons", level = 3, max_level = 8, maxed = true })
+end)
+
+t.test("store items and upgrades carry the game's own text, as their hover boxes show", function()
+    local raw = raw_at_store()
+    raw.store.items[1].description = "Fires 2 shots.\n\nRequired Power: 2"
+    local shields = raw.upgrades.systems[1] -- level 2 of 8
+    shields.description = "Powers your shields."
+    shields.levels = {
+        { level = 1, text = "" }, -- the game leaves some levels blank
+        { level = 2, text = "One Shield Barrier" },
+        { level = 3, cost = 20, text = "" },
+        { level = 4, cost = 30, text = "Two Shield Barriers" },
+    }
+    local views = V.observe(nil, raw, {}).views
+    t.eq(views.store.items[1].description, "Fires 2 shots.\n\nRequired Power: 2")
+    local u = views.upgrades.systems[1]
+    t.eq({ u.description, u.levels }, {
+        "Powers your shields.",
+        {
+            { level = 1 },
+            { level = 2, text = "One Shield Barrier" },
+            { level = 3, cost = 20 },
+            { level = 4, cost = 30, text = "Two Shield Barriers" },
+        },
+    })
 end)
 
 t.test("the store shows only when a human could open it", function()

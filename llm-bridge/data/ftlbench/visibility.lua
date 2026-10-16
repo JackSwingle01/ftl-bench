@@ -79,6 +79,8 @@ FtlBench = FtlBench or {}
 ---@field lifeform_scanner boolean?
 ---@field reactor { used: integer, max: integer }?
 ---@field systems RawSystem[]?
+---@field augments string[]? names, as the ship screen shows them
+---@field cargo string[]? names of the items in the cargo hold
 ---@field shield_layers integer?
 ---@field shield_layers_max integer?
 ---@field zoltan integer? Zoltan (super) shield HP left
@@ -138,10 +140,11 @@ FtlBench = FtlBench or {}
 ---@field cost integer
 ---@field stock integer
 ---@field can_hold boolean   room for it, and not already installed
+---@field description string? the game's tooltip text: description, stats, scrap value
 
 ---@class RawUpgrades
 ---@field reactor { level: integer, cost: integer? }   cost nil at the maximum
----@field systems { type: integer, level: integer, max_level: integer, cost: integer? }[]
+---@field systems { type: integer, level: integer, max_level: integer, cost: integer?, description: string?, levels: { level: integer, cost: integer?, text: string }[]? }[]
 
 ---@class RawState
 ---@field in_run boolean
@@ -159,6 +162,7 @@ FtlBench = FtlBench or {}
 ---@field map RawMap?
 ---@field event RawEvent?    the open event window, if any
 ---@field enemy RawEnemy?
+---@field texts table<string, string>? game text by name (the warning banners)
 ---@field boarders RawCrew[]? enemy crew aboard our ship after their ship has gone
 ---@field autofire boolean?
 ---@field store { open: boolean, items: RawStoreItem[] }?  the store at this beacon, if any
@@ -418,6 +422,12 @@ local function observe_power(ship, view)
     for i, d in ipairs(ship.drones or {}) do
         view.drones[i] =
             { id = "drone:" .. (i - 1), name = d.name, powered = d.powered, deployed = d.deployed }
+    end
+    for field, kind in pairs({ augments = "augment", cargo = "cargo" }) do -- as the ship screen lists them
+        view[field] = setmetatable({}, LIST)
+        for i, name in ipairs(ship[field] or {}) do
+            view[field][i] = { id = kind .. ":" .. (i - 1), name = name }
+        end
     end
 end
 
@@ -885,9 +895,21 @@ local function observe_store(raw)
             stock = it.stock,
             affordable = scrap >= it.cost,
             can_hold = it.can_hold,
+            description = it.description,
         }
     end
     return { open = raw.store.open, items = items }
+end
+
+---The upgrade screen's level list: every level, the price of those not yet bought, and its text
+---(blank for some levels, which then carry none).
+---@param levels { level: integer, cost: integer?, text: string }[]
+local function levels_view(levels)
+    local out = setmetatable({}, LIST)
+    for i, l in ipairs(levels) do
+        out[i] = { level = l.level, cost = l.cost, text = l.text ~= "" and l.text or nil }
+    end
+    return out
 end
 
 ---@param raw RawState
@@ -904,10 +926,13 @@ local function observe_upgrades(raw)
     local u = raw.upgrades --[[@as RawUpgrades]]
     local systems = setmetatable({}, LIST)
     for i, s in ipairs(u.systems) do
-        systems[i] = priced(
-            { id = Visibility.system_id(s.type), level = s.level, max_level = s.max_level },
-            s.cost
-        )
+        systems[i] = priced({
+            id = Visibility.system_id(s.type),
+            level = s.level,
+            max_level = s.max_level,
+            description = s.description,
+            levels = s.levels and levels_view(s.levels),
+        }, s.cost)
     end
     return { reactor = priced({ level = u.reactor.level }, u.reactor.cost), systems = systems }
 end
@@ -1053,6 +1078,38 @@ local function observe_map(raw, map)
     return { sector = raw.sector, beacons = beacons, sectors = sectors, drive = drive_status(raw) }
 end
 
+---The game's red WARNING banners that are up now, in its own words (text_misc.xml; the conditions
+---are its own notes there). Nil when none is up.
+---@param raw RawState
+---@param ship table our ship's view (for intruders as the player sees them)
+---@return string[]?
+local function warnings(raw, ship)
+    local p = raw.player --[[@as RawShip]]
+    local texts, out = raw.texts or {}, nil
+    local systems = index_by(p.systems or {}, "type")
+    local shields, engines = systems[0], systems[1]
+    local hull = p.hull / math.max(p.hull_max, 1)
+    for _, w in ipairs({
+        { hull <= 0.25, "warning_hull_25" }, -- the worst hull banner only
+        { hull > 0.25 and hull <= 0.5, "warning_hull_50" },
+        { hull > 0.5 and hull <= 0.75, "warning_hull_75" },
+        {
+            shields and shields.damage > 0 and shields.level - shields.damage <= 1,
+            "warning_shields",
+        },
+        { (p.oxygen or 100) < 25, "warning_oxygen" },
+        { ship.intruders_detected, "warning_intruders" },
+        { engines and engines.damage >= engines.level, "warning_engine" },
+    }) do
+        if w[1] then
+            out = out or setmetatable({}, LIST)
+            local text = (texts[w[2]] or w[2]):gsub("\\n", " "):gsub("%s*\n%s*", " ") -- banner lines
+            out[#out + 1] = text
+        end
+    end
+    return out
+end
+
 ---Build the Observation and the new Visible events.
 ---@param prev RawState? raw state from the previous frame (nil on the first frame)
 ---@param raw RawState
@@ -1084,6 +1141,7 @@ function Visibility.observe(prev, raw, hooks)
     }
     if out.views.state.ship then
         out.views.state.ship.ftl_drive = drive_status(raw) -- on the HUD, so no window needed
+        out.views.state.warnings = warnings(raw, out.views.state.ship)
     end
     -- A human can open the store only with no event window up and no hostile ship here.
     local store_usable = raw.store

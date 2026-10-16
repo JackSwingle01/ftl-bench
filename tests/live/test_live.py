@@ -439,6 +439,11 @@ class LiveNavigationTest(LiveCase):
             if b["id"] not in here["links"] and b is not here
         )
         r = ftl("jump", far)
+        for _ in range(3):  # an event can open a moment after arriving
+            if "an event is open" not in r.stderr:
+                break
+            answer_events()
+            r = ftl("jump", far)
         self.assertEqual(r.returncode, 1)
         self.assertIn("is not linked", r.stderr)
 

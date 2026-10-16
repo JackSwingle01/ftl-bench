@@ -432,6 +432,107 @@ local function mark_damage(crew)
     end
 end
 
+local WARNINGS = {
+    "warning_hull_75",
+    "warning_hull_50",
+    "warning_hull_25",
+    "warning_shields",
+    "warning_oxygen",
+    "warning_intruders",
+    "warning_engine",
+}
+local warning_text_cache
+
+---The warning banners' text, from the game's text library (read once).
+---@return table<string, string>
+local function warning_texts()
+    if not warning_text_cache then
+        warning_text_cache = {}
+        for _, name in ipairs(WARNINGS) do
+            warning_text_cache[name] = Hyperspace.Text:GetText(name)
+        end
+    end
+    return warning_text_cache
+end
+
+---@param v any a std::vector<std::string>
+---@return string[]
+local function string_list(v)
+    local out = {}
+    for i = 0, v:size() - 1 do
+        out[#out + 1] = v[i]
+    end
+    return out
+end
+
+---An equipment blueprint's display name, whichever kind it is.
+---@param name string
+---@return string
+local function title_of(name)
+    local B = Hyperspace.Blueprints
+    for _, bp in ipairs({
+        B:GetWeaponBlueprint(name),
+        B:GetDroneBlueprint(name),
+        B:GetAugmentBlueprint(name),
+    }) do
+        local title = bp.desc.title:GetText()
+        if title ~= "" then
+            return title
+        end
+    end
+    return name
+end
+
+local tooltips = {} -- by blueprint name: an item's text doesn't change
+
+---The text a player sees hovering an item in the store or the equipment screen: the game fills the
+---equipment screen's info box for it (with Hyperspace's redesigned tooltips, switched on in our
+---hyperspace.xml.append) and we read the box back. Nil for a name that is no equipment.
+---@param name string a blueprint name
+---@return string?
+local function hover_text(name)
+    if tooltips[name] == nil then
+        local B, info = Hyperspace.Blueprints, Hyperspace.App.gui.equipScreen.infoBox
+        local weapon, drone = B:GetWeaponBlueprint(name), B:GetDroneBlueprint(name)
+        local augment, crew = B:GetAugmentBlueprint(name), B:GetCrewBlueprint(name)
+        -- Each getter hands back a blank blueprint for a name it doesn't know.
+        if int(weapon.power) > 0 then
+            info:SetBlueprint(weapon, 0, true, 0)
+        elseif int(drone.power) > 0 then
+            info:SetBlueprint(drone, 0, true, 0)
+        elseif augment.desc.title:GetText() ~= "" then
+            info:SetBlueprint(augment)
+        elseif crew.desc.title:GetText() ~= "" then
+            info:SetBlueprint(crew, 0, false)
+        end
+        tooltips[name] = info.desc.description:GetText()
+        info:Clear()
+    end
+    return tooltips[name] ~= "" and tooltips[name] or nil
+end
+
+---A store box's hover text. Systems, fuel, missiles and the like show their description.
+---@param box any StoreBox
+---@return string
+local function store_tooltip(box)
+    return box.pBlueprint and hover_text(box.pBlueprint.name) or box.desc.description:GetText()
+end
+
+---A system box's hover text without its hotkey lines (Commands move power, not keys).
+---@param box any SystemBox
+---@return string
+local function system_tooltip(box)
+    local add = Hyperspace.Text:GetText("add_power"):match("^[^\\]*")
+    local remove = Hyperspace.Text:GetText("remove_power"):match("^[^\\]*")
+    local lines = {}
+    for line in (box:GenerateTooltip() .. "\n"):gmatch("(.-)\n") do
+        if line:sub(1, #add) ~= add and line:sub(1, #remove) ~= remove then
+            lines[#lines + 1] = line
+        end
+    end
+    return (table.concat(lines, "\n"):gsub("%s+$", ""))
+end
+
 ---The store at the current beacon, if any (a human can open it from the store button here).
 ---@return table? store raw store view
 ---@return any[] boxes StoreBox objects in item order
@@ -452,10 +553,31 @@ local function read_store()
                 cost = int(box.desc.cost),
                 stock = int(box.count),
                 can_hold = box:CanHold(),
+                description = store_tooltip(box),
             }
         end
     end
     return { open = store.bOpen, items = items }, boxes, store
+end
+
+local system_texts = {} -- by system type: fixed for the Run, so read once
+
+---A system's upgrade-screen text: its description and each level's line (0-based in the game).
+---@param y any ShipSystem
+---@param bp any SystemBlueprint?
+---@param max integer
+---@return { description: string?, levels: string[] }
+local function system_text(y, bp, max)
+    local key = int(y.iSystemType)
+    local text = system_texts[key]
+    if not text or #text.levels < max then
+        text = { description = bp and bp.desc.description:GetText(), levels = {} }
+        for l = 1, max do
+            text.levels[l] = Hyperspace.ShipSystem.GetLevelDescription(y.iSystemType, l - 1, false)
+        end
+        system_texts[key] = text
+    end
+    return text
 end
 
 ---@param ship any ShipManager
@@ -470,8 +592,24 @@ local function read_upgrades(ship)
         if level < max and bp and bp.upgradeCosts:size() >= level then
             cost = int(bp.upgradeCosts[level - 1]) -- costs[i] buys level i + 2
         end
-        systems[#systems + 1] =
-            { type = int(y.iSystemType), level = level, max_level = max, cost = cost }
+        local text = system_text(y, bp, max)
+        local levels = {}
+        for l = 1, max do -- the upgrade screen's list: prices for levels not yet bought
+            local price = l > level and bp and bp.upgradeCosts:size() >= l - 1
+            levels[l] = {
+                level = l,
+                cost = price and int(bp.upgradeCosts[l - 2]) or nil,
+                text = text.levels[l],
+            }
+        end
+        systems[#systems + 1] = {
+            type = int(y.iSystemType),
+            level = level,
+            max_level = max,
+            cost = cost,
+            description = text.description,
+            levels = levels,
+        }
     end
     local reactor_cost = int(Hyperspace.App.gui.upgradeScreen.reactorButton:GetUpgradeCost())
     local pm = Hyperspace.PowerManager.GetPowerManager(0)
@@ -512,6 +650,7 @@ end
 
 -- Game objects behind the last raw state, for the executor.
 local door_objects, crew_objects, weapon_objects, drone_objects, store_boxes = {}, {}, {}, {}, {}
+local augment_names, cargo_names = {}, {} -- blueprint names, in the state view's order
 
 ---@return RawState
 local function read_raw()
@@ -566,6 +705,15 @@ local function read_raw()
         p.evasion, p.fuel = ship:GetDodgeFactor(), int(ship.fuel_count)
         p.missiles, p.drone_parts = int(ship:GetMissileCount()), int(ship:GetDroneCount())
         p.weapons, p.drones, weapon_objects, drone_objects = read_armaments(ship)
+        augment_names, cargo_names =
+            string_list(ship:GetAugmentationList()), string_list(gui.equipScreen:GetCargoHold())
+        p.augments, p.cargo = {}, {}
+        for i, name in ipairs(augment_names) do
+            p.augments[i] = title_of(name)
+        end
+        for i, name in ipairs(cargo_names) do
+            p.cargo[i] = title_of(name)
+        end
         p.ftl_charge, p.ftl_charge_time = ship.jump_timer.first, ship.jump_timer.second
         p.sensors_manned = sensors ~= nil and int(sensors.iActiveManned) > 0
         p.lifeform_scanner = has_augment(ship, "LIFE_SCANNER")
@@ -576,6 +724,7 @@ local function read_raw()
         raw.map = read_map(app.world.starMap)
         raw.event = read_event(gui)
         raw.store, store_boxes = read_store()
+        raw.texts = warning_texts()
         raw.window = game_window()
         if shown.pending and raw.window == shown.pending then
             shown.pending = nil
@@ -974,6 +1123,32 @@ script.on_internal_event(events.SHIELD_COLLISION, function(ship, projectile, _da
     return CONTINUE
 end)
 
+---What `ftl help <id>` shows: the game's hover text for each thing of ours, by its state ID.
+---@param raw RawState
+---@return table<string, string>
+local function help_texts(raw)
+    local help = {}
+    local boxes = Hyperspace.App.gui.sysControl.sysBoxes
+    for i = 0, boxes:size() - 1 do
+        local box = boxes[i]
+        help[Visibility.system_id(int(box.pSystem.iSystemType))] = system_tooltip(box)
+    end
+    for kind, list in pairs({ weapon = weapon_objects, drone = drone_objects }) do
+        for i, obj in ipairs(list) do
+            help[kind .. ":" .. (i - 1)] = hover_text(obj.blueprint.name)
+        end
+    end
+    for kind, names in pairs({ augment = augment_names, cargo = cargo_names }) do
+        for i, name in ipairs(names) do
+            help[kind .. ":" .. (i - 1)] = hover_text(name)
+        end
+    end
+    for _, c in ipairs(raw.player.crew or {}) do
+        help["crew:" .. c.uid] = hover_text(c.species)
+    end
+    return help
+end
+
 local function tick()
     local raw = read_raw()
     if raw.in_run then
@@ -996,6 +1171,11 @@ local function tick()
     -- A dev build writes raw state to disk (dev-probe); flag it so no Run using it can pass as scored.
     out.views.state.dev_build = FtlBench.dev_probe or nil
     write_atomic(LIVE .. "/state.json", Json.encode(out.views.state))
+    if raw.in_run and frame % 30 == 0 then -- system status changes; twice a second is plenty
+        write_atomic(LIVE .. "/help.json", Json.encode(help_texts(raw)))
+    elseif not raw.in_run then
+        os.remove(LIVE .. "/help.json")
+    end
     for _, view in ipairs({ "map", "store", "upgrades" }) do
         if out.views[view] then
             write_atomic(LIVE .. "/" .. view .. ".json", Json.encode(out.views[view]))
